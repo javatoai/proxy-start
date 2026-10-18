@@ -35,9 +35,12 @@ $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 $outputRoot = $OutputDir.TrimEnd([char[]]@('\', '/'))
 if ($outputRoot.Length -eq 2 -and $outputRoot[1] -eq ':') { $outputRoot += '\' }
 function Normalize-Path([string]$Path) {
-    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd([char[]]@('\', '/'))
-    if ($full.Length -eq 2 -and $full[1] -eq ':') { $full += '\' }
-    return $full
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $volumeRoot = [System.IO.Path]::GetPathRoot($full)
+    # Keep Unix / and Windows volume roots intact while walking parents.
+    # Trimming / to an empty string makes Directory.GetParent reject it.
+    if ($full -eq $volumeRoot) { return $volumeRoot }
+    return $full.TrimEnd([char[]]@('\', '/'))
 }
 function Assert-NoReparsePointInPath([string]$Path, [string]$Root) {
     $current = Normalize-Path $Path

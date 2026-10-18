@@ -65,6 +65,8 @@ $env:PROXY_START_WINDOWS_DIAGNOSTIC = '1'
 
 应用身份比较现在先将两种分隔符规范为 `/`，再做不依赖宿主系统的词法清理；保留原有大小写与包身份规则，并覆盖 Windows 路径点段和 macOS `.app` 路径。关联进程生命周期测试使用宿主可识别的路径构造，继续验证主程序退出后辅助进程存活时代理会话不得被回收。修复不通过跳过 Mac 测试或放宽生命周期断言处理失败。旧标签保持不变，修复版本使用 `v0.1.9`。
 
+[修复后的分支 CI](https://github.com/javatoai/proxy-start/actions/runs/39137037444)已在 macOS runner 实际通过全量 Go 测试、静态检查和 Darwin 进程 / 应用解析集成测试。该次构建随后发现打包脚本将 Unix 根目录 `/` 修剪为空字符串，已改为保留文件系统根目录；平台测试通过与打包完成分别记录，仍不把 CI 写作 GUI、Keychain 或真实 Codex 网络验收。
+
 ## 0.1.8 控制台真实代理请求与公开发布流程
 
 通过生产 `Launcher.Open` 的同一环境注入和独立控制台创建路径，启动自动退出的测试 PowerShell，运行不带 `--proxy` 的 `curl.exe https://example.com/`。HTTP 测试使用临时回环 CONNECT 记录转发器，原样转发到 `127.0.0.1:7897`；严格观察到 `CONNECT example.com:443`，curl 退出码 0、HTTP 200。随后仅把代理环境改为不可达端口，同一命令返回退出码 7、HTTP 000，没有回退直连。SOCKS5 测试注入 `socks5h://127.0.0.1:7897`，同样退出码 0、HTTP 200。完整复现命令与边界见 [控制台验证记录](CONSOLE-VERIFICATION.md)。
