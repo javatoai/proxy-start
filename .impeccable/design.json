@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-18T19:51:31+08:00",
+  "title": "Design System: Proxy Start Native Application Manager",
+  "extensions": {
+    "colorMeta": {
+      "brand-blue": { "role": "primary", "displayName": "Brand Blue", "canonical": "#2563EB", "tonalRamp": ["#071a42", "#0b2d70", "#123f9a", "#2563eb", "#2c6de8", "#5b91f7", "#93b8fb", "#dbeafe"] },
+      "accent-blue": { "role": "primary", "displayName": "Product Blue", "canonical": "#2C6DE8", "tonalRamp": ["#0b1f4a", "#123c89", "#1d4ed8", "#2c6de8", "#5b91f7", "#68a0ff", "#93c5fd", "#dbeafe"] },
+      "accent-blue-hover": { "role": "primary", "displayName": "Product Blue Hover", "canonical": "#2563D9", "tonalRamp": ["#071735", "#0f3170", "#163eaa", "#2563d9", "#2c6de8", "#5b91f7", "#68a0ff", "#bfdbfe"] },
+      "accent-blue-pressed": { "role": "primary", "displayName": "Product Blue Pressed", "canonical": "#1D4ED8", "tonalRamp": ["#06142e", "#0b2457", "#16398c", "#1d4ed8", "#2c6de8", "#5b91f7", "#93c5fd", "#dbeafe"] },
+      "accent-blue-dark": { "role": "primary", "displayName": "Night Product Blue", "canonical": "#2C6DE8", "tonalRamp": ["#0b1f4a", "#123c89", "#1d4ed8", "#2c6de8", "#5b91f7", "#68a0ff", "#93c5fd", "#dbeafe"] },
+      "accent-blue-dark-hover": { "role": "primary", "displayName": "Night Product Blue Hover", "canonical": "#2563D9", "tonalRamp": ["#0f3170", "#163eaa", "#2563d9", "#2c6de8", "#5b91f7", "#68a0ff", "#93c5fd", "#dbeafe"] },
+      "accent-blue-dark-pressed": { "role": "primary", "displayName": "Night Product Blue Pressed", "canonical": "#1D4ED8", "tonalRamp": ["#06142e", "#0b2457", "#16398c", "#1d4ed8", "#2c6de8", "#5b91f7", "#93c5fd", "#dbeafe"] },
+      "light-background": { "role": "neutral", "displayName": "Light Canvas", "canonical": "#FFFFFF", "tonalRamp": ["#202938", "#344054", "#475467", "#667085", "#98a2b3", "#d0d5dd", "#f3f5f7", "#ffffff"] },
+      "light-surface": { "role": "neutral", "displayName": "Light Control Surface", "canonical": "#F3F5F7", "tonalRamp": ["#202938", "#344054", "#475467", "#667085", "#98a2b3", "#dce1e8", "#e9edf2", "#f3f5f7"] },
+      "light-surface-hover": { "role": "neutral", "displayName": "Light Surface Hover", "canonical": "#E9EDF2", "tonalRamp": ["#202938", "#344054", "#475467", "#667085", "#98a2b3", "#d0d5dd", "#e9edf2", "#f3f5f7"] },
+      "light-surface-pressed": { "role": "neutral", "displayName": "Light Surface Pressed", "canonical": "#DEE5ED", "tonalRamp": ["#202938", "#344054", "#475467", "#667085", "#98a2b3", "#c5ccd6", "#dee5ed", "#f3f5f7"] },
+      "light-border": { "role": "neutral", "displayName": "Light Border", "canonical": "#DCE1E8", "tonalRamp": ["#202938", "#344054", "#475467", "#667085", "#98a2b3", "#dce1e8", "#e9edf2", "#ffffff"] },
+      "light-text": { "role": "neutral", "displayName": "Light Ink", "canonical": "#202938", "tonalRamp": ["#101828", "#202938", "#344054", "#475467", "#667085", "#98a2b3", "#d0d5dd", "#f3f5f7"] },
+      "light-muted": { "role": "neutral", "displayName": "Light Muted Ink", "canonical": "#667085", "tonalRamp": ["#202938", "#344054", "#475467", "#667085", "#98a2b3", "#d0d5dd", "#f3f5f7", "#ffffff"] },
+      "dark-background": { "role": "neutral", "displayName": "Dark Canvas", "canonical": "#171D26", "tonalRamp": ["#0b0f14", "#111722", "#171d26", "#232b37", "#2c3746", "#394453", "#a8b3c2", "#edf2f7"] },
+      "dark-surface": { "role": "neutral", "displayName": "Dark Surface", "canonical": "#232B37", "tonalRamp": ["#0b0f14", "#111722", "#171d26", "#232b37", "#2c3746", "#394453", "#a8b3c2", "#edf2f7"] },
+      "dark-surface-hover": { "role": "neutral", "displayName": "Dark Surface Hover", "canonical": "#2C3746", "tonalRamp": ["#0b0f14", "#111722", "#171d26", "#2c3746", "#394453", "#667085", "#a8b3c2", "#edf2f7"] },
+      "dark-surface-pressed": { "role": "neutral", "displayName": "Dark Surface Pressed", "canonical": "#364255", "tonalRamp": ["#0b0f14", "#111722", "#171d26", "#364255", "#394453", "#667085", "#a8b3c2", "#edf2f7"] },
+      "dark-border": { "role": "neutral", "displayName": "Dark Border", "canonical": "#394453", "tonalRamp": ["#0b0f14", "#111722", "#171d26", "#394453", "#667085", "#a8b3c2", "#d0d5dd", "#edf2f7"] },
+      "dark-text": { "role": "neutral", "displayName": "Dark Ink", "canonical": "#EDF2F7", "tonalRamp": ["#0b0f14", "#171d26", "#232b37", "#394453", "#667085", "#a8b3c2", "#d0d5dd", "#edf2f7"] },
+      "dark-muted": { "role": "neutral", "displayName": "Dark Muted Ink", "canonical": "#A8B3C2", "tonalRamp": ["#171d26", "#232b37", "#394453", "#667085", "#a8b3c2", "#d0d5dd", "#edf2f7", "#ffffff"] },
+      "sidebar-light": { "role": "neutral", "displayName": "Pale Blue-Gray Rail", "canonical": "#EDF2F6", "tonalRamp": ["#1d2933", "#344955", "#536c79", "#7f9aa7", "#aac0c9", "#c9d9df", "#edf2f6", "#f8fbfc"] },
+      "selection-light": { "role": "primary", "displayName": "Light Selection", "canonical": "rgba(52, 120, 246, 0.23)", "tonalRamp": ["rgba(52, 120, 246, 0.08)", "rgba(52, 120, 246, 0.12)", "rgba(52, 120, 246, 0.16)", "rgba(52, 120, 246, 0.20)", "rgba(52, 120, 246, 0.23)", "rgba(52, 120, 246, 0.32)", "rgba(52, 120, 246, 0.42)", "rgba(52, 120, 246, 0.52)"] },
+      "selection-dark": { "role": "primary", "displayName": "Dark Selection", "canonical": "rgba(74, 140, 255, 0.34)", "tonalRamp": ["rgba(74, 140, 255, 0.10)", "rgba(74, 140, 255, 0.14)", "rgba(74, 140, 255, 0.20)", "rgba(74, 140, 255, 0.26)", "rgba(74, 140, 255, 0.34)", "rgba(74, 140, 255, 0.46)", "rgba(74, 140, 255, 0.60)", "rgba(74, 140, 255, 0.74)"] },
+      "focus-light": { "role": "primary", "displayName": "Light Focus", "canonical": "rgba(52, 120, 246, 0.52)", "tonalRamp": ["rgba(52, 120, 246, 0.14)", "rgba(52, 120, 246, 0.20)", "rgba(52, 120, 246, 0.28)", "rgba(52, 120, 246, 0.38)", "rgba(52, 120, 246, 0.52)", "rgba(52, 120, 246, 0.64)", "rgba(52, 120, 246, 0.76)", "rgba(52, 120, 246, 0.88)"] },
+      "focus-dark": { "role": "primary", "displayName": "Dark Focus", "canonical": "rgba(104, 160, 255, 0.62)", "tonalRamp": ["rgba(104, 160, 255, 0.14)", "rgba(104, 160, 255, 0.20)", "rgba(104, 160, 255, 0.28)", "rgba(104, 160, 255, 0.40)", "rgba(104, 160, 255, 0.62)", "rgba(104, 160, 255, 0.72)", "rgba(104, 160, 255, 0.84)", "rgba(104, 160, 255, 0.94)"] },
+      "success": { "role": "tertiary", "displayName": "Success Green", "canonical": "#177B46", "tonalRamp": ["#052e16", "#14532d", "#166534", "#177b46", "#22a861", "#63d69a", "#a7efc6", "#dcfce7"] },
+      "success-dark": { "role": "tertiary", "displayName": "Night Success Green", "canonical": "#63D69A", "tonalRamp": ["#052e16", "#14532d", "#166534", "#18824b", "#22a861", "#63d69a", "#a7efc6", "#dcfce7"] },
+      "warning": { "role": "tertiary", "displayName": "Attention Amber", "canonical": "#A85A08", "tonalRamp": ["#451a03", "#78350f", "#92400e", "#a85a08", "#d97706", "#f59e0b", "#fbbf24", "#fef3c7"] },
+      "warning-dark": { "role": "tertiary", "displayName": "Night Attention Amber", "canonical": "#F4B75E", "tonalRamp": ["#451a03", "#78350f", "#92400e", "#d97706", "#f4b75e", "#fbbf24", "#fcd34d", "#fef3c7"] },
+      "danger": { "role": "tertiary", "displayName": "Failure Red", "canonical": "#C53B3F", "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#c53b3f", "#dc2626", "#ef4444", "#fca5a5", "#fee2e2"] },
+      "danger-dark": { "role": "tertiary", "displayName": "Night Failure Rose", "canonical": "#FF8A8F", "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#c53b3f", "#ef4444", "#ff8a8f", "#fca5a5", "#fee2e2"] },
+      "mode-native-light": { "role": "primary", "displayName": "Light Native Mode Blue", "canonical": "#245AC2", "tonalRamp": ["#071735", "#0f3170", "#163eaa", "#245ac2", "#2c6de8", "#5b91f7", "#93c5fd", "#dbeafe"] },
+      "mode-native-dark": { "role": "primary", "displayName": "Dark Native Mode Blue", "canonical": "#8CB7FF", "tonalRamp": ["#123c89", "#1d4ed8", "#2c6de8", "#5b91f7", "#68a0ff", "#8cb7ff", "#bfdbfe", "#dbeafe"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Page Display", "purpose": "24px/600 page titles such as 应用, 代理设置, and 系统设置." },
+      "headline": { "displayName": "Product Headline", "purpose": "18px/600 product identity and editor headings." },
+      "title": { "displayName": "Page Title", "purpose": "24px/600 page-heading token; settings section headings use the smaller 18px/600 treatment." },
+      "body": { "displayName": "Working Body", "purpose": "14px root UI text for controls, navigation labels, and application names." },
+      "secondary": { "displayName": "Secondary Detail", "purpose": "12px counts, descriptions, helper copy, paths, and runtime detail." },
+      "label": { "displayName": "Compact Label", "purpose": "13px/600 settings field labels and compact status headings." }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [
+      { "name": "table-compact", "value": "920px", "purpose": "Drop the Mode column and compress proxy/status/action widths." },
+      { "name": "inspector-stack", "value": "1040px", "purpose": "Switch the selected application to a separate full-width detail view below this width; at or above it, use the fixed 300px right inspector." },
+      { "name": "window-minimum", "value": "820px", "purpose": "Minimum useful native window width." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Installed Application Picker",
+      "kind": "custom",
+      "refersTo": "installed-picker",
+      "description": "A 680x580 native modal clamped to the host window, with a 36px focused search field, counts and virtualized 60px rows. Each row has a friendly software name, a real 32px system icon or neutral fallback and an 80x36 action. Already-added launch entries show a disabled 已添加 action by stable identity. Microsoft and Windows system software are hidden by default, disclosed in the count and controlled by the persisted 隐藏系统软件 switch in 系统设置. Up to four visible-row icon requests run asynchronously; closing cancels them.",
+      "html": "<section class=\"ds-installed-picker\"><h3>添加已安装应用</h3><input placeholder=\"搜索名称、路径或包名\"><p>共 3 个应用</p><div class=\"ds-installed-row\"><span>示例程序</span><button>添加</button></div></section>",
+      "css": ".ds-installed-picker { box-sizing: border-box; width: 680px; max-width: calc(100vw - 48px); height: 580px; max-height: calc(100vh - 48px); padding: 24px; border: 1px solid #DCE1E8; border-radius: 12px; background: #FFFFFF; color: #202938; font: 400 14px 'Microsoft YaHei UI'; } .ds-installed-picker input { box-sizing: border-box; width: 100%; height: 36px; background: #F3F5F7; border: 1px solid #DCE1E8; border-radius: 8px; } .ds-installed-row { display: flex; align-items: center; justify-content: space-between; height: 60px; } .ds-installed-row button { width: 80px; height: 36px; }"
+    },
+    {
+      "name": "Proxy Settings Table",
+      "kind": "custom",
+      "refersTo": "table-row",
+      "description": "A bounded proxy profile table with the columns 名称, 地址, 协议, 默认标记, and 操作. Every row exposes 打开代理控制台, 编辑, and 删除; the page header exposes 新增代理.",
+      "html": "<section class=\"ds-proxy-table\"><header><h2>代理设置</h2><button class=\"ds-btn-primary\">新增代理</button></header><div class=\"ds-proxy-head\"><span>名称</span><span>地址</span><span>协议</span><span>默认</span><span>操作</span></div><div class=\"ds-proxy-row\"><span>本机</span><span>127.0.0.1:7897</span><span>自动检测</span><span>默认</span><span><button>打开控制台</button><button>编辑</button><button>删除</button></span></div></section>",
+      "css": ".ds-proxy-table { box-sizing: border-box; width: 100%; max-width: 1060px; border: 1px solid #DCE1E8; border-radius: 8px; overflow: hidden; background: #FFFFFF; color: #202938; font: 400 14px 'Microsoft YaHei UI'; } .ds-proxy-table header { display: flex; align-items: center; justify-content: space-between; min-height: 88px; padding: 20px 24px 16px; } .ds-proxy-head, .ds-proxy-row { display: grid; grid-template-columns: 220px minmax(150px, 1fr) 100px 90px 270px; gap: 0; align-items: center; padding: 0 14px; } .ds-proxy-head { min-height: 38px; background: #F3F5F7; color: #667085; font: 600 12px 'Microsoft YaHei UI'; } .ds-proxy-row { min-height: 68px; border-top: 1px solid #DCE1E8; } .ds-proxy-row button { height: 34px; margin-right: 6px; }"
+    },
+    {
+      "name": "Proxy Profile Modal",
+      "kind": "custom",
+      "refersTo": "input",
+      "description": "The shared native modal for adding and editing a proxy. It includes name, address, protocol, optional authentication, default selection, and test actions. Delete opens a separate confirmation modal.",
+      "html": "<dialog class=\"ds-profile-modal\"><h3>新增代理</h3><label>名称<input></label><label>地址<input></label><label>协议<select><option>自动检测</option></select></label><details><summary>认证</summary><label>用户名<input></label><label>密码<input type=\"password\"></label></details><label><input type=\"checkbox\"> 设为默认代理</label><footer><button>测试连接</button><button>保存</button></footer></dialog>",
+      "css": ".ds-profile-modal { box-sizing: border-box; width: 520px; max-width: calc(100vw - 48px); padding: 24px; border: 1px solid #DCE1E8; border-radius: 12px; background: #FFFFFF; color: #202938; font: 400 14px 'Microsoft YaHei UI'; } .ds-profile-modal label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font: 600 13px 'Microsoft YaHei UI'; } .ds-profile-modal input, .ds-profile-modal select { height: 36px; padding: 0 11px; border: 1px solid #DCE1E8; border-radius: 8px; background: #F3F5F7; } .ds-profile-modal footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 20px; }"
+    },
+    {
+      "name": "Proxy Console Action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The primary row action that opens a new platform shell with the selected profile's scoped proxy environment. Only tools that read proxy environment variables are affected; the action communicates shell creation, not verified target connectivity.",
+      "html": "<button class=\"ds-btn-primary\">打开代理控制台</button>",
+      "css": ".ds-proxy-console { height: 34px; padding: 0 11px; background: #2C6DE8; color: #FFFFFF; border: 0; border-radius: 8px; font: 400 14px 'Microsoft YaHei UI'; } .ds-proxy-console:focus-visible { outline: 2px solid rgba(52, 120, 246, 0.52); outline-offset: 2px; }"
+    },
+    {
+      "name": "System Settings Column",
+      "kind": "custom",
+      "refersTo": "input",
+      "description": "A single scrolling settings column capped at 760px with the sections 外观, 应用列表, and 强制代理组件. The system software switch remains reachable when no proxy profile exists.",
+      "html": "<main class=\"ds-system-settings\"><section><h2>外观</h2><label>主题<select><option>跟随系统</option></select></label></section><section><h2>应用列表</h2><label>隐藏系统软件<input type=\"checkbox\"></label></section><section><h2>强制代理组件</h2><p>组件状态与安装操作</p></section></main>",
+      "css": ".ds-system-settings { box-sizing: border-box; width: 100%; max-width: 760px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 26px; } .ds-system-settings section { display: flex; flex-direction: column; gap: 10px; padding-bottom: 26px; border-bottom: 1px solid #DCE1E8; } .ds-system-settings h2 { margin: 0; font: 600 16px 'Microsoft YaHei UI'; }"
+    },
+    {
+      "name": "Floating Operation Toast",
+      "kind": "custom",
+      "refersTo": "operation-toast",
+      "description": "A top-right floating notification that does not reserve footer space. Success expires after about four seconds; pending feedback remains until a result replaces it; errors remain until the user closes them.",
+      "html": "<div class=\"ds-toast\" role=\"status\"><span>代理配置已保存</span></div>",
+      "css": ".ds-toast { box-sizing: border-box; max-width: 420px; margin: 16px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; border: 1px solid #DCE1E8; border-radius: 8px; background: #FFFFFF; color: #202938; font: 400 12px 'Microsoft YaHei UI'; }"
+    },
+    {
+      "name": "Product Mark",
+      "kind": "custom",
+      "refersTo": "brand-mark",
+      "description": "The shared geometric mark used in the sidebar lockup, window icon, tray icon, and shortcut asset.",
+      "html": "<span class=\"ds-brand-mark\" aria-label=\"Proxy Start\"><svg viewBox=\"0 0 64 64\" aria-hidden=\"true\"><rect x=\"2\" y=\"2\" width=\"60\" height=\"60\" rx=\"15\" fill=\"#2563EB\"></rect><path d=\"M17 24h30M38 17l9 7-9 7M47 40H17M26 33l-9 7 9 7\" fill=\"none\" stroke=\"#fff\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"></path><circle cx=\"16\" cy=\"32\" r=\"5\" fill=\"#2563EB\" stroke=\"#fff\" stroke-width=\"3\"></circle><circle cx=\"48\" cy=\"32\" r=\"5\" fill=\"#2563EB\" stroke=\"#fff\" stroke-width=\"3\"></circle></svg></span>",
+      "css": ".ds-brand-mark { display: inline-grid; width: 32px; height: 32px; } .ds-brand-mark svg { width: 32px; height: 32px; display: block; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single clear action for adding, starting, or saving on the current surface.",
+      "html": "<button class=\"ds-btn-primary\">添加程序</button>",
+      "css": ".ds-btn-primary { background: #2C6DE8; color: #FFFFFF; height: 36px; padding: 0 14px; border: 1px solid transparent; border-radius: 8px; font: 400 14px 'Microsoft YaHei UI'; cursor: pointer; } .ds-btn-primary:hover { background: #2563D9; } .ds-btn-primary:active { background: #1D4ED8; } .ds-btn-primary:focus-visible { outline: 2px solid rgba(52, 120, 246, 0.52); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A quiet adjacent action such as adding an installed app, testing, or deleting.",
+      "html": "<button class=\"ds-btn-secondary\">添加已安装应用</button>",
+      "css": ".ds-btn-secondary { background: #F3F5F7; color: #202938; height: 36px; padding: 0 12px; border: 1px solid #DCE1E8; border-radius: 8px; font: 400 14px 'Microsoft YaHei UI'; cursor: pointer; } .ds-btn-secondary:hover { background: #E9EDF2; } .ds-btn-secondary:active { background: #DEE5ED; } .ds-btn-secondary:focus-visible { outline: 2px solid rgba(52, 120, 246, 0.52); outline-offset: 2px; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A compact search field aligned with the launch filters; it is 248px wide at the default window and grows in compact layouts.",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"10.8\" cy=\"10.8\" r=\"6.5\"></circle><path d=\"m16 16 4.5 4.5\"></path></svg><input placeholder=\"搜索应用\"></label>",
+      "css": ".ds-search { display: flex; align-items: center; gap: 8px; width: 248px; height: 36px; padding: 0 11px; background: #F3F5F7; border: 1px solid #DCE1E8; border-radius: 8px; color: #667085; } .ds-search svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; } .ds-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #202938; font: 400 14px 'Microsoft YaHei UI'; } .ds-search:focus-within { border-color: #2C6DE8; outline: 0; }"
+    },
+    {
+      "name": "Active Navigation",
+      "kind": "nav",
+      "refersTo": "nav-active",
+      "description": "The selected workspace destination in the quiet blue-gray rail. The rail contains exactly 应用, 代理设置, and 系统设置.",
+      "html": "<button class=\"ds-nav-active\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"></rect><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"></rect><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"></rect><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"></rect></svg><span>应用</span></button>",
+      "css": ".ds-nav-active { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 12px; background: #2C6DE8; color: #FFFFFF; border: 0; border-radius: 8px; font: 500 14px 'Microsoft YaHei UI'; cursor: pointer; } .ds-nav-active svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; } .ds-nav-active:hover { background: #2563D9; } .ds-nav-active:focus-visible { outline: 2px solid rgba(52, 120, 246, 0.52); outline-offset: 2px; }"
+    },
+    {
+      "name": "Application Table Row",
+      "kind": "custom",
+      "refersTo": "table-row",
+      "description": "A scanable application row with real icon, proxy assignment, honest runtime state, and actions.",
+      "html": "<div class=\"ds-app-row\"><span class=\"ds-app-icon\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"5\" y=\"4\" width=\"14\" height=\"16\" rx=\"2\"></rect><path d=\"M9 8h6M9 12h6M9 16h3\"></path></svg></span><span class=\"ds-app-name\">Codex</span><span class=\"ds-app-proxy\">跟随默认代理</span><span class=\"ds-app-status\">运行中</span><button class=\"ds-row-action\">结束</button></div>",
+      "css": ".ds-app-row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 12px; background: #FFFFFF; color: #202938; border-bottom: 1px solid #DCE1E8; font: 400 14px 'Microsoft YaHei UI'; } .ds-app-row:hover { background: #F3F5F7; } .ds-app-icon { display: grid; place-items: center; width: 40px; height: 40px; color: #245AC2; background: rgba(52, 120, 246, 0.23); border-radius: 8px; } .ds-app-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; } .ds-app-name { flex: 1; min-width: 140px; font-weight: 500; } .ds-app-proxy { width: 166px; } .ds-app-status { width: 116px; color: #A85A08; font-size: 12px; } .ds-row-action { height: 36px; padding: 0 12px; background: #F3F5F7; color: #202938; border: 1px solid #DCE1E8; border-radius: 8px; font: 400 14px 'Microsoft YaHei UI'; } .ds-row-action:focus-visible { outline: 2px solid rgba(52, 120, 246, 0.52); outline-offset: 2px; }"
+    },
+    {
+      "name": "Inspector Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A labeled editor field in the selected-program inspector or proxy settings form.",
+      "html": "<label class=\"ds-field\"><span>显示名称</span><input value=\"Codex\"></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 6px; color: #202938; font: 600 13px 'Microsoft YaHei UI'; } .ds-field input { width: 100%; height: 36px; padding: 0 11px; background: #F3F5F7; color: #202938; border: 1px solid #DCE1E8; border-radius: 8px; font: 400 14px 'Microsoft YaHei UI'; outline: 0; } .ds-field input:focus-visible { outline: 2px solid rgba(52, 120, 246, 0.52); outline-offset: 2px; }"
+    },
+    {
+      "name": "Runtime Status",
+      "kind": "chip",
+      "refersTo": "table-row",
+      "description": "A compact semantic runtime label that distinguishes applied or verified state from merely running.",
+      "html": "<span class=\"ds-status-warning\"><span aria-hidden=\"true\"></span>运行中</span>",
+      "css": ".ds-status-warning { display: inline-flex; align-items: center; gap: 6px; color: #A85A08; font: 400 12px 'Microsoft YaHei UI'; } .ds-status-warning > span { width: 7px; height: 7px; border-radius: 999px; background: #A85A08; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Operations Console",
+    "overview": "Proxy Start is a native Windows and macOS utility used while the user is thinking about another application. The interface is calm, legible, and operational: a pale blue-gray rail contains the brand lockup and exactly three workspace destinations: 应用, 代理设置, and 系统设置. The working surface gives the application list or settings table its full visual priority. The supplied application-manager reference informs the hierarchy, compact rows, sidebar material, and restrained table rhythm; the product remains a native proxy tool with concise Chinese copy and native controls.\n\nThe system uses one blue interactive voice over theme-derived surfaces. Light mode keeps the main work surface white and the rail pale blue-gray; dark mode uses charcoal-blue surfaces without inverting status semantics. Color is reserved for selection, primary actions, focus, the shared brand mark, and honest runtime/probe states. Depth comes from surface changes and fine borders rather than decoration or floating cards. System settings use a single 760px column; operation feedback is a top-right floating toast with no reserved footer. Platform capabilities come from the application snapshot: macOS uses system-ui, presents Codex native support and clearly unavailable forced-proxy controls.",
+    "keyCharacteristics": [
+      "Native desktop posture with a 214px work rail and a spacious working surface, with platform-native fonts.",
+      "Compact, scanable application table with stable semantic columns and real application icons.",
+      "Proxy settings use a clear profile table and modal editing flow; system settings use a single 760px column.",
+      "The proxy console action opens a platform shell with a scoped environment and never implies verified connectivity.",
+      "One blue action voice; green, amber, and red only carry runtime or probe meaning.",
+      "Light, dark, and system themes share the same structure and spacing rhythm.",
+      "No gradients, fake connectivity indicators, invented usage statistics, or decorative dashboards."
+    ],
+    "rules": [
+      { "name": "The One Blue Voice Rule", "body": "Use product blue for action, selection, focus, and the active rail destination. Do not turn every informational label into accent-colored decoration.", "section": "colors" },
+      { "name": "The Honest State Rule", "body": "Green means an actual applied, ready, or verified result; amber means pending, forced, or attention-needed; red means failure. A launched process alone never earns a verified state.", "section": "colors" },
+      { "name": "The Weight Before Size Rule", "body": "Establish hierarchy with weight and spacing before introducing a larger type size; keep dense tables readable without oversized labels.", "section": "typography" },
+      { "name": "The Tonal Layer Rule", "body": "Prefer a surface shift or a one-pixel border to a shadow. Use a stronger border only for drag-over, focus, or an explicit error state.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use the theme tokens for every surface, border, text, selection, focus, and state color so system, light, and dark modes remain coherent.",
+      "Do keep the 214px rail, 24px content inset, 88px page header, and 4/8/12/16/24/28px spacing rhythm unless a responsive rule requires compression.",
+      "Do preserve the stable table column grid and let the Name column absorb available width.",
+      "Do keep long detail bodies scrollable while leaving their 36px action bar reachable.",
+      "Do let proxy and system settings scroll within their own content columns, keep modal actions in one wrapping row, and place operation feedback in the top-right toast viewport.",
+      "Do expose real operation progress, disabled duplicate actions, wrapped errors, and clear recovery actions.",
+      "Do keep drag-and-drop discoverable through the table surface and a restrained accent border while dragging."
+    ],
+    "donts": [
+      "Don't add gradients, glassmorphism, decorative shadows, fake connectivity indicators, or invented usage statistics.",
+      "Don't use a blue label for a state merely because it looks active; reserve semantic colors for their documented meanings.",
+      "Don't hide the selected-program inspector in repeated table rows or make it permanently consume narrow-window width.",
+      "Don't claim proxy connectivity because a target process started; retain the distinction between applied, running, and verified.",
+      "Don't replace native Windows controls with web-shaped controls, oversized cards, or a decorative empty drop zone."
+    ]
+  }
+}

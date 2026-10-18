@@ -1,0 +1,9 @@
+/dist/
+/.tools/
+/.cache/
+/.impeccable/review/
+*.test.exe
+*.log
+__pycache__/
+*.py[cod]
+.DS_Store

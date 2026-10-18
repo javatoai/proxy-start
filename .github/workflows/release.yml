@@ -1,0 +1,318 @@
+name: Verify and release Proxy Start
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build (for example v0.1.8)
+        required: true
+        default: v0.1.8
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proxy-start-release-${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # go1.27.2 is the current stable patch used by the checked-in Windows
+  # helper build and was verified against go.dev/dl on 2026-10-18.
+  GO_VERSION: '1.27.2'
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '0'
+  GOFLAGS: -mod=readonly
+  GOPROXY: https://proxy.golang.org,direct
+  GOSUMDB: sum.golang.org
+
+jobs:
+  version:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      ref: ${{ steps.version.outputs.ref }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate tag against VERSION
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must contain a semantic three-part version" >&2
+            exit 1
+          fi
+          release=false
+          tag=""
+          ref="$GITHUB_REF"
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+            if [[ "$tag" != "v$version" ]]; then
+              echo "Release tag must be v$version, got $tag" >&2
+              exit 1
+            fi
+            ref="$tag"
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$INPUT_TAG"
+            if [[ "$tag" != "v$version" ]]; then
+              echo "Release tag must be v$version, got $tag" >&2
+              exit 1
+            fi
+            if ! git rev-parse "$tag^{commit}" >/dev/null 2>&1; then
+              echo "workflow_dispatch requires an existing tag: $tag" >&2
+              exit 1
+            fi
+            ref="$tag"
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/* ]]; then
+            ref="$GITHUB_REF"
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            ref="$GITHUB_REF"
+          fi
+          {
+            echo "release=$release"
+            echo "ref=$ref"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-2025
+            platform: windows-x64
+          - name: macOS arm64 and amd64
+            runner: macos-14
+            platform: macos
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Check Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          go_version="$(go version)"
+          [[ "$go_version" == "go version go${GO_VERSION} "* ]] || {
+            echo "Unexpected Go toolchain: $go_version" >&2
+            exit 1
+          }
+
+      - name: Run Windows tests and console environment check
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
+          $env:PROXY_START_CONSOLE_REAL = '1'
+          go test ./internal/platform/console -run '^TestWindowsChildEnvironmentIntegration$' -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows console environment test failed' }
+
+      - name: Run native macOS tests
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! go test ./...; then echo 'go test failed' >&2; exit 1; fi
+          if ! go vet ./...; then echo 'go vet failed' >&2; exit 1; fi
+          if ! PROXY_START_DARWIN_INTEGRATION=1 go test ./internal/platform/darwin -count=1; then
+            echo 'Darwin integration test failed' >&2
+            exit 1
+          fi
+
+      - name: Build Windows portable and source packages
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = "dist/release-$env:RELEASE_VERSION"
+          ./scripts/pack.ps1 -OutputDir $output -GoExe go -SkipTests
+          $staging = 'dist/windows-x64'
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Get-ChildItem -LiteralPath $output -Filter '*.zip' -File | Copy-Item -Destination $staging
+          Copy-Item -LiteralPath (Join-Path $output 'checksums.sha256') -Destination (Join-Path $staging 'ProxyStart-windows.checksums.sha256')
+          $assets = @(Get-ChildItem -LiteralPath $staging -File)
+          if ($assets.Count -ne 3) { throw "Expected three Windows release assets, got $($assets.Count)" }
+          $checkBinary = Join-Path $output 'ProxyStart-windows-amd64/proxy-start.exe'
+          $checkConfig = Join-Path $env:RUNNER_TEMP 'proxy-start-check-settings.json'
+          $checkStdout = Join-Path $env:RUNNER_TEMP 'proxy-start-check.stdout.json'
+          $checkStderr = Join-Path $env:RUNNER_TEMP 'proxy-start-check.stderr.txt'
+          $checkProcess = Start-Process -FilePath $checkBinary -ArgumentList @('--check', '--config', ('"' + $checkConfig + '"')) -WindowStyle Hidden -RedirectStandardOutput $checkStdout -RedirectStandardError $checkStderr -PassThru
+          if (-not $checkProcess.WaitForExit(15000)) { Stop-Process -Id $checkProcess.Id -Force; throw 'Windows --check timed out' }
+          if ($checkProcess.ExitCode -ne 0) { throw ('Windows --check failed: ' + (Get-Content -LiteralPath $checkStderr -Raw)) }
+          $checkOutput = Get-Content -LiteralPath $checkStdout -Raw
+          $check = $checkOutput | ConvertFrom-Json
+          if ($check.Version -ne $env:RELEASE_VERSION) { throw "Windows --check version $($check.Version) does not match $env:RELEASE_VERSION" }
+
+      - name: Build macOS arm64 and amd64 app packages
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          output="dist/release-${RELEASE_VERSION}-macos"
+          command -v pwsh >/dev/null 2>&1
+          pwsh -NoLogo -NoProfile -File scripts/pack-macos.ps1 -OutputDir "$output" -Version "$RELEASE_VERSION" -GoExe "$(command -v go)" -SkipTests
+          staging='dist/macos'
+          mkdir -p "$staging"
+          find "$output" -maxdepth 1 -type f -name '*.zip' -exec cp {} "$staging/" \;
+          cp "$output/checksums.sha256" "$staging/ProxyStart-macos.checksums.sha256"
+          count="$(find "$staging" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          test "$count" -eq 3
+          native_arch="$(go env GOARCH)"
+          app="$output/ProxyStart-macos-${native_arch}/Proxy Start.app"
+          plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          test "$plist_version" = "$RELEASE_VERSION"
+          "$app/Contents/MacOS/proxy-start" --check --config "$RUNNER_TEMP/proxy-start-smoke-settings.json" >/tmp/proxy-start-check.txt
+          test -s /tmp/proxy-start-check.txt
+          python3 - "$RELEASE_VERSION" /tmp/proxy-start-check.txt <<'PY'
+          import json
+          import pathlib
+          import sys
+          expected = sys.argv[1]
+          payload = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'))
+          if payload.get('Version') != expected:
+              raise SystemExit(f"--check version {payload.get('Version')!r} does not match {expected!r}")
+          PY
+
+      - name: Upload platform packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: proxy-start-${{ matrix.platform }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: dist/${{ matrix.platform }}/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    name: Verify assets and publish GitHub Release
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true' && github.repository == 'javatoai/proxy-start'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - name: Download successful platform packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: proxy-start-*-${{ github.run_number }}-${{ github.run_attempt }}
+          path: dist/release
+          merge-multiple: true
+
+      - name: Validate package set and hashes
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-release-assets.py --directory dist/release --version "$RELEASE_VERSION"
+
+      - name: Prepare release notes
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/proxy-start-release-notes.md" <<EOF
+          ## Verification
+
+          - Windows console environment and HTTP/SOCKS5 request integration: [launcher tests](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/internal/platform/console/launcher_windows_test.go) and [HTTP/SOCKS5 environment mapping tests](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/internal/application/console_test.go). The public-network integration remains opt-in; this workflow runs the bounded environment test.
+          - CI evidence: [workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
+          - macOS arm64/amd64 packages are unsigned and not notarized. No Developer ID certificate is included, and macOS GUI/real-device acceptance remains outside this build-only workflow.
+          - macOS supports the Codex native HTTP adapter and proxy terminal environment. Per-application forced proxy is available only on Windows.
+          - The macOS build verifies native process behavior and runs a non-interactive `--check` smoke with a temporary settings path; it does not install a forced-proxy driver or launch a target application.
+          EOF
+
+      - name: Create or reuse draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          NOTES_FILE: ${{ runner.temp }}/proxy-start-release-notes.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')"
+            test "$draft" = true || { echo "Release $RELEASE_TAG already published" >&2; exit 1; }
+            gh release edit "$RELEASE_TAG" --title "Proxy Start $RELEASE_TAG" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Proxy Start $RELEASE_TAG" --notes-file "$NOTES_FILE"
+          fi
+
+      - name: Upload verified assets to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" dist/release/* --clobber
+
+      - name: Verify remote release assets and digests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "$RUNNER_TEMP/proxy-start-release.json"
+          python3 scripts/verify-github-release.py \
+            --directory dist/release \
+            --release-json "$RUNNER_TEMP/proxy-start-release.json"
+
+      - name: Publish release after asset upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        shell: bash
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest

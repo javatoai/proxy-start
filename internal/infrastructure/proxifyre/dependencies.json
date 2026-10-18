@@ -1,0 +1,13 @@
+{
+  "engine": {
+    "name": "ProxiFyre-2.6.4-win-x64-setup.exe",
+    "version": "2.6.4",
+    "source": "https://github.com/wiresock/proxifyre/releases/download/v2.6.4/ProxiFyre-2.6.4-win-x64-setup.exe",
+    "sha256": "afaf3ac8a2069f9653adb1b4a63b31d1edd8aa109ccdc367cf0d4462e78f5027",
+    "prerequisites": [
+      ".NET Framework 4.7.2 or later",
+      "Microsoft Visual C++ x64 runtime (VC14)",
+      "Windows Packet Filter / NDISRD driver"
+    ]
+  }
+}
