@@ -2,7 +2,7 @@
 
 <!-- impeccable:product-schema 1 -->
 
-当前目标版本：0.1.8。Windows x64 是首版完整交付平台；macOS 提供 arm64 / amd64 源码与交叉编译包，原生适配仅 Codex，强制代理、实机 GUI / Codex 网络、签名和公证仍未完成验收。
+当前目标版本：0.1.9。Windows x64 是首版完整交付平台；macOS 提供 arm64 / amd64 源码与交叉编译包，原生适配仅 Codex，强制代理、实机 GUI / Codex 网络、签名和公证仍未完成验收。
 
 ## Platform
 

@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 
@@ -208,11 +208,13 @@ func normalizeExecutable(value string) string {
 	if value == "" {
 		return ""
 	}
-	// Resolver inputs may use either slash style. filepath.Clean removes
-	// redundant separators and dot segments while preserving relative paths
-	// used by tests and legacy settings.
-	value = strings.ReplaceAll(value, "/", string(filepath.Separator))
-	value = filepath.Clean(value)
+	// Resolver inputs may use either slash style regardless of the host that
+	// compares them. Normalize both separators before using path.Clean so a
+	// Windows identity remains comparable when a settings fixture is loaded on
+	// macOS (and vice versa). This is lexical normalization only; the
+	// application layer must not resolve filesystem links or inspect the host.
+	value = strings.ReplaceAll(value, "\\", "/")
+	value = path.Clean(value)
 	if value == "." {
 		return ""
 	}

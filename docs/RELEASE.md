@@ -4,7 +4,7 @@
 
 ## 版本与标签
 
-0.1.8 的发布标签应为 `v0.1.8`，并与根目录 `VERSION`、产品入口和 macOS `Info.plist` 中的版本保持一致。Go 程序直接嵌入 `VERSION`，无需分别维护界面与诊断版本。新版本发布前应检查：
+0.1.9 的发布标签应为 `v0.1.9`，并与根目录 `VERSION`、产品入口和 macOS `Info.plist` 中的版本保持一致。Go 程序直接嵌入 `VERSION`，无需分别维护界面与诊断版本。新版本发布前应检查：
 
 - 根目录 `VERSION` 与发布标签；
 - `scripts/pack.ps1` 与 `scripts/pack-macos.ps1` 的输出目录及默认版本；
@@ -30,7 +30,7 @@
 
 ```powershell
 .\scripts\pack.ps1 `
-  -OutputDir dist\release-0.1.8 `
+  -OutputDir dist\release-0.1.9 `
   -Proxy http://127.0.0.1:7897
 ```
 
@@ -48,8 +48,8 @@ Windows 上可以交叉编译两个架构：
 
 ```powershell
 .\scripts\pack-macos.ps1 `
-  -OutputDir dist\release-0.1.8-macos `
-  -Version 0.1.8
+  -OutputDir dist\release-0.1.9-macos `
+  -Version 0.1.9
 ```
 
 产物为 `ProxyStart-macos-arm64.zip` 和 `ProxyStart-macos-amd64.zip`。脚本检查 Mach-O 架构、`MH_EXECUTE` 文件类型、`.app` 目录布局、ZIP 内 Unix 权限和 SHA-256。它不完成 Developer ID 签名或 Apple 公证。

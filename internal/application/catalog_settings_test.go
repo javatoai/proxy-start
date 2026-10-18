@@ -97,6 +97,18 @@ func TestSameApplicationUsesStableIdentityInsteadOfDisplayName(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "cross platform path normalization removes dot segments",
+			a:    domain.AppIdentity{Name: "Codex", Executable: `/Applications/Codex.app/Contents/MacOS/./Codex`},
+			b:    domain.AppIdentity{Name: "Codex", Executable: `/Applications/Codex.app/Contents/MacOS/../MacOS/Codex`},
+			want: true,
+		},
+		{
+			name: "windows dot segments normalize on macOS style host",
+			a:    domain.AppIdentity{Name: "Tool", Executable: `C:\Apps\.\Demo\..\Demo\tool.exe`},
+			b:    domain.AppIdentity{Name: "Tool", Executable: `c:/apps/demo/tool.exe`},
+			want: true,
+		},
+		{
 			name: "same AUMID wins over changed package path",
 			a:    domain.AppIdentity{Name: "Old", Executable: `C:\Apps\v1.exe`, AUMID: "Contoso.App_abc!Main"},
 			b:    domain.AppIdentity{Name: "New", Executable: `D:\Apps\v2.exe`, AUMID: "contoso.app_ABC!main"},

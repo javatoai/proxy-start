@@ -99,6 +99,11 @@ type relatedProcesses struct {
 	helperAlive bool
 }
 
+// Keep the fixture portable: filepath.Base must see the same separator on
+// every test host. Windows-specific identity normalization remains covered by
+// catalog_settings_test.go.
+var relatedHelperPath = filepath.Join("fixtures", "helper.exe")
+
 func (p *relatedProcesses) Find(_ context.Context, identity domain.AppIdentity) ([]domain.ProcessHandle, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -107,7 +112,7 @@ func (p *relatedProcesses) Find(_ context.Context, identity domain.AppIdentity) 
 		return []domain.ProcessHandle{{PID: 101, Executable: "test.exe", StartedAt: time.Unix(1, 0)}}, nil
 	}
 	if name == "helper.exe" && p.helperAlive {
-		return []domain.ProcessHandle{{PID: 102, Executable: `C:\helper.exe`, StartedAt: time.Unix(2, 0)}}, nil
+		return []domain.ProcessHandle{{PID: 102, Executable: relatedHelperPath, StartedAt: time.Unix(2, 0)}}, nil
 	}
 	return nil, nil
 }
@@ -138,7 +143,7 @@ func (p *relatedProcesses) Alive(_ context.Context, handle domain.ProcessHandle)
 
 func TestPollKeepsForcedLeaseWhileRelatedHelperIsAlive(t *testing.T) {
 	settings := domain.DefaultSettings()
-	settings.Apps = []domain.AppEntry{{ID: "app", Name: "unknown", Identity: domain.AppIdentity{Name: "unknown", Executable: "test.exe"}, RelatedExecutables: []string{`C:\helper.exe`}}}
+	settings.Apps = []domain.AppEntry{{ID: "app", Name: "unknown", Identity: domain.AppIdentity{Name: "unknown", Executable: "test.exe"}, RelatedExecutables: []string{relatedHelperPath}}}
 	processes := &relatedProcesses{}
 	backend := &fakeBackend{}
 	desktop := lifecycleDesktop(t, settings, fakeResolver{}, processes, backend)
