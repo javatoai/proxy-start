@@ -34,14 +34,8 @@ def download_asset(url: str, target: Path) -> None:
         raise RuntimeError(error or f"gh api failed for {url}")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--directory", required=True, type=Path)
-    parser.add_argument("--release-json", required=True, type=Path)
-    args = parser.parse_args()
-
-    directory = args.directory.resolve()
-    release = json.loads(args.release_json.read_text(encoding="utf-8"))
+def verify_release(directory: Path, release: dict) -> None:
+    directory = directory.resolve()
     local = {entry.name: entry for entry in directory.iterdir() if entry.is_file()}
     remote = {asset["name"]: asset for asset in release.get("assets", [])}
     if set(local) != set(remote):
@@ -71,6 +65,16 @@ def main() -> int:
                     f"digest mismatch for {name}: remote {remote_hash}, local {local_hash}"
                 )
     print(f"verified GitHub Release asset set and hashes: {len(local)} files")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--directory", required=True, type=Path)
+    parser.add_argument("--release-json", required=True, type=Path)
+    args = parser.parse_args()
+
+    release = json.loads(args.release_json.read_text(encoding="utf-8"))
+    verify_release(args.directory, release)
     return 0
 
 

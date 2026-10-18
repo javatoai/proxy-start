@@ -9,7 +9,7 @@
   <a href="#文档">文档</a>
 </p>
 
-Proxy Start 面向已经拥有本机或远程代理的桌面用户：保存一个代理配置，把程序拖入启动列表，再选择启动、结束或重启。界面使用 MyGO 原生控件，不依赖 WebView、Electron 或 JVM。当前目标版本为 **0.1.9**；Windows x64 是首版完整交付平台，macOS 提供可运行源码和交叉编译包，但仍需 Mac 实机验收。
+Proxy Start 面向已经拥有本机或远程代理的桌面用户：保存一个代理配置，把程序拖入启动列表，再选择启动、结束或重启。界面使用 MyGO 原生控件，不依赖 WebView、Electron 或 JVM。当前目标版本为 **0.1.10**；Windows x64 是首版完整交付平台，macOS 提供可运行源码和交叉编译包，但仍需 Mac 实机验收。
 
 > 代理已应用只表示启动参数或规则已经提交。实际网络连接需要单独验证，不能因为程序成功启动就推断流量已经经过代理。
 
@@ -113,11 +113,11 @@ Windows 强制代理首次使用需要在“系统设置”中准备组件并接
 ```powershell
 .\scripts\build.ps1 -GUI
 .\scripts\run.ps1
-.\scripts\pack.ps1 -OutputDir dist\release-0.1.9 -Proxy http://127.0.0.1:7897
-.\scripts\pack-macos.ps1 -OutputDir dist\release-0.1.9-macos -SkipTests
+.\scripts\pack.ps1 -OutputDir dist\release-0.1.10 -Proxy http://127.0.0.1:7897
+.\scripts\pack-macos.ps1 -OutputDir dist\release-0.1.10-macos -SkipTests
 ```
 
-GitHub Actions 的发布约定与 Silverwing 类似：普通分支和 Pull Request 运行测试与平台构建；推送严格匹配产品版本的 `v0.1.9` 标签时，分别构建 Windows x64 与 macOS arm64 / amd64，汇总经过校验的包，再由发布任务创建 GitHub Release。CI 的跨平台编译、单元测试和 ZIP 检查不等于 Mac 实机 GUI、Codex 网络或强制代理验收；本地打包也不会安装驱动或发布 Release。具体命令和流程见 [发布说明](docs/RELEASE.md)。
+GitHub Actions 的发布约定与 Silverwing 类似：普通分支和 Pull Request 运行测试与平台构建；推送严格匹配产品版本的 `v0.1.10` 标签时，分别构建 Windows x64 与 macOS arm64 / amd64，汇总经过校验的包，再由发布任务创建 GitHub Release。CI 的跨平台编译、单元测试和 ZIP 检查不等于 Mac 实机 GUI、Codex 网络或强制代理验收；本地打包也不会安装驱动或发布 Release。具体命令和流程见 [发布说明](docs/RELEASE.md)。
 
 ## 文档
 

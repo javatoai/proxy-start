@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build (for example v0.1.9)
+        description: Existing version tag to build (for example v0.1.10)
         required: true
-        default: v0.1.9
+        default: v0.1.10
         type: string
 
 permissions:
@@ -96,6 +96,10 @@ jobs:
             echo "tag=$tag"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Test release verification gates
+        shell: bash
+        run: python3 -m unittest discover -s scripts -p 'test_release_verification.py' -v
 
   build:
     name: ${{ matrix.name }}
@@ -263,17 +267,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/proxy-start-release-notes.md" <<EOF
-          ## Verification
-
-          - Windows console environment and HTTP/SOCKS5 request integration: [launcher tests](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/internal/platform/console/launcher_windows_test.go) and [HTTP/SOCKS5 environment mapping tests](https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/internal/application/console_test.go). The public-network integration remains opt-in; this workflow runs the bounded environment test.
-          - CI evidence: [workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
-          - macOS arm64/amd64 packages are unsigned and not notarized. No Developer ID certificate is included, and macOS GUI/real-device acceptance remains outside this build-only workflow.
-          - macOS supports the Codex native HTTP adapter and proxy terminal environment. Per-application forced proxy is available only on Windows.
-          - The macOS build verifies native process behavior and runs a non-interactive `--check` smoke with a temporary settings path; it does not install a forced-proxy driver or launch a target application.
-          EOF
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          repo = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['RELEASE_TAG']
+          run = f"{os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          notes = '\n'.join([
+              '## 验证与平台范围', '',
+              f'- Windows 代理控制台的 HTTP / SOCKS5 HTTPS 请求与失败对照已实测，见[验证记录](https://github.com/{repo}/blob/{tag}/docs/CONSOLE-VERIFICATION.md)。CI 运行子进程环境测试，真实外网测试保留为显式启用。',
+              f'- Windows / macOS 原生测试、构建和版本诊断：[本次 CI]({run})。',
+              '- macOS 提供 Apple Silicon / Intel 包、Codex 原生 HTTP 代理和代理终端；按程序强制代理仅支持 Windows。',
+              '- macOS 未完成 Developer ID 签名或公证，GUI、Keychain、Terminal 和真实 Codex 联网仍需 Mac 实机验收。',
+              '- macOS CI 使用临时配置执行 `--check`，并验证进程启停与回收；不安装驱动或启动目标应用。', '',
+          ])
+          Path(os.environ['RUNNER_TEMP'], 'proxy-start-release-notes.md').write_text(notes, encoding='utf-8')
+          PY
 
       - name: Create or reuse draft release
+        id: draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
@@ -281,13 +293,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')"
+          lookup_release_id() {
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id"
+          }
+          release_id="$(lookup_release_id)"
+          if [[ -n "$release_id" ]]; then
+            [[ "$release_id" =~ ^[0-9]+$ ]] || { echo 'Ambiguous release id' >&2; exit 1; }
+            draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --jq '.draft')"
             test "$draft" = true || { echo "Release $RELEASE_TAG already published" >&2; exit 1; }
             gh release edit "$RELEASE_TAG" --title "Proxy Start $RELEASE_TAG" --notes-file "$NOTES_FILE"
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Proxy Start $RELEASE_TAG" --notes-file "$NOTES_FILE"
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null
+            python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          payload = {
+              'tag_name': os.environ['RELEASE_TAG'],
+              'name': f"Proxy Start {os.environ['RELEASE_TAG']}",
+              'body': Path(os.environ['NOTES_FILE']).read_text(encoding='utf-8'),
+              'draft': True,
+          }
+          Path(os.environ['RUNNER_TEMP'], 'proxy-start-release-request.json').write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+          PY
+            release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --method POST --input "$RUNNER_TEMP/proxy-start-release-request.json" --jq '.id')"
           fi
+          [[ "$release_id" =~ ^[0-9]+$ ]] || { echo 'Missing release id' >&2; exit 1; }
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Upload verified assets to draft release
         env:
@@ -302,10 +334,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "$RUNNER_TEMP/proxy-start-release.json"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "$RUNNER_TEMP/proxy-start-release.json"
           python3 scripts/verify-github-release.py \
             --directory dist/release \
             --release-json "$RUNNER_TEMP/proxy-start-release.json"

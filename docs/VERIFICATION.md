@@ -1,6 +1,6 @@
 # 验证记录
 
-验证环境：2026-10-18，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.9（Windows `release-0.1.9`，macOS `release-0.1.9-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
+验证环境：2026-10-18，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.10（Windows `release-0.1.10`，macOS `release-0.1.10-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
 
 ## 自动化验证
 
@@ -57,7 +57,13 @@ $env:PROXY_START_WINDOWS_DIAGNOSTIC = '1'
 
 ## 交付
 
-源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.9/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。
+源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.10/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。
+
+## 0.1.10 发布草稿与跨平台校验
+
+[v0.1.9 正式标签构建](https://github.com/javatoai/proxy-start/actions/runs/39137433901)的 Windows / macOS 测试、进程集成、两架构 `.app` 打包和打包程序 `--check` 均已通过。七个发布文件已上传至草稿，发布前远端检查因按标签查询草稿返回 404 而阻止发布。发布步骤改为使用数值 Release ID，保留精确文件集合、大小与 SHA-256 校验。
+
+Release 说明使用 Python 写入字面 Markdown，避免 shell 对反引号执行命令替换。已有聚合校验文件验证后保持原始字节，新文件固定使用 LF，避免在 Windows 上将下载文件改写为 CRLF 后与远端哈希不同。发布工具的失败与重试不移动已有标签，最终源码与工作流修复纳入 `v0.1.10`。
 
 ## 0.1.9 macOS 原生 CI 路径回归修复
 

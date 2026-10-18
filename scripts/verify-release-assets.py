@@ -15,6 +15,18 @@ import sys
 from pathlib import Path
 
 
+WINDOWS_ASSETS = frozenset(
+    {"ProxyStart-windows-amd64.zip", "ProxyStart-source.zip"}
+)
+MACOS_ASSETS = frozenset(
+    {"ProxyStart-macos-arm64.zip", "ProxyStart-macos-amd64.zip"}
+)
+PLATFORM_MANIFESTS = frozenset(
+    {"ProxyStart-windows.checksums.sha256", "ProxyStart-macos.checksums.sha256"}
+)
+RELEASE_ASSETS = WINDOWS_ASSETS | MACOS_ASSETS | PLATFORM_MANIFESTS
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -59,50 +71,58 @@ def verify_manifest(directory: Path, name: str, expected: set[str]) -> None:
             )
 
 
+def verify_directory(directory: Path, version: str) -> Path:
+    if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        raise SystemExit("version must be a three-part numeric version")
+    directory = directory.resolve()
+    if not directory.is_dir():
+        raise SystemExit(f"release directory does not exist: {directory}")
+
+    aggregate_name = f"ProxyStart-{version}.checksums.sha256"
+    actual = {
+        entry.name
+        for entry in directory.iterdir()
+        if entry.is_file() and entry.name != aggregate_name
+    }
+    if actual != RELEASE_ASSETS:
+        raise ValueError(
+            f"release asset set is {sorted(actual)}, expected {sorted(RELEASE_ASSETS)}"
+        )
+
+    verify_manifest(directory, "ProxyStart-windows.checksums.sha256", set(WINDOWS_ASSETS))
+    verify_manifest(directory, "ProxyStart-macos.checksums.sha256", set(MACOS_ASSETS))
+
+    aggregate = directory / aggregate_name
+    # Include both archives and the two platform manifests in the top-level
+    # release hash so every uploaded asset has an independently verifiable
+    # digest (the aggregate file itself is intentionally excluded).
+    expected_hashes = {
+        name: sha256(directory / name) for name in sorted(RELEASE_ASSETS)
+    }
+    if aggregate.is_file():
+        existing = read_manifest(aggregate)
+        if existing != expected_hashes:
+            raise ValueError(f"existing aggregate manifest is stale: {aggregate.name}")
+        # A valid aggregate is already part of the release input. Do not
+        # rewrite it: pathlib/text-mode newline conversion on Windows would
+        # change CRLF bytes and invalidate the uploaded digest.
+        print(f"verified {len(RELEASE_ASSETS)} release assets; kept {aggregate.name}")
+        return aggregate
+
+    lines = [f"{digest}  {name}" for name, digest in expected_hashes.items()]
+    with aggregate.open("w", encoding="ascii", newline="\n") as stream:
+        stream.write("\n".join(lines) + "\n")
+    print(f"verified {len(RELEASE_ASSETS)} release assets and wrote {aggregate.name}")
+    return aggregate
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--version", required=True)
     args = parser.parse_args()
 
-    if re.fullmatch(r"\d+\.\d+\.\d+", args.version) is None:
-        raise SystemExit("version must be a three-part numeric version")
-    directory = args.directory.resolve()
-    if not directory.is_dir():
-        raise SystemExit(f"release directory does not exist: {directory}")
-
-    windows = {"ProxyStart-windows-amd64.zip", "ProxyStart-source.zip"}
-    macos = {"ProxyStart-macos-arm64.zip", "ProxyStart-macos-amd64.zip"}
-    expected = windows | macos | {
-        "ProxyStart-windows.checksums.sha256",
-        "ProxyStart-macos.checksums.sha256",
-    }
-    aggregate_name = f"ProxyStart-{args.version}.checksums.sha256"
-    actual = {
-        entry.name
-        for entry in directory.iterdir()
-        if entry.is_file() and entry.name != aggregate_name
-    }
-    if actual != expected:
-        raise ValueError(f"release asset set is {sorted(actual)}, expected {sorted(expected)}")
-
-    verify_manifest(directory, "ProxyStart-windows.checksums.sha256", windows)
-    verify_manifest(directory, "ProxyStart-macos.checksums.sha256", macos)
-
-    aggregate = directory / aggregate_name
-    # Include both archives and the two platform manifests in the top-level
-    # release hash so every uploaded asset has an independently verifiable
-    # digest (the aggregate file itself is intentionally excluded).
-    lines = [f"{sha256(directory / name)}  {name}" for name in sorted(expected)]
-    if aggregate.is_file():
-        existing = read_manifest(aggregate)
-        expected_existing = {
-            name: sha256(directory / name) for name in sorted(expected)
-        }
-        if existing != expected_existing:
-            raise ValueError(f"existing aggregate manifest is stale: {aggregate.name}")
-    aggregate.write_text("\n".join(lines) + "\n", encoding="ascii")
-    print(f"verified {len(expected)} release assets and wrote {aggregate.name}")
+    verify_directory(args.directory, args.version)
     return 0
 
 
