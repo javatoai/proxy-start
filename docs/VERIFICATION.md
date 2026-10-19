@@ -1,6 +1,6 @@
 # 验证记录
 
-验证环境：2026-10-19，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.11（Windows `release-0.1.11`，macOS `release-0.1.11-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
+验证环境：2026-10-19，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.12（Windows `release-0.1.12`，macOS `release-0.1.12-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
 
 ## 2026-10-19 0.1.11 域名绕过与品牌图标验证
 
@@ -66,7 +66,13 @@ $env:PROXY_START_WINDOWS_DIAGNOSTIC = '1'
 
 ## 交付
 
-源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.11/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。品牌图标以 `assets/proxy-start.svg` 为唯一源，32px 窗口 / 托盘图像、PE/ICO、ICNS 和 1024px 预览均由它派生。
+源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.12/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。品牌图标以 `assets/proxy-start.svg` 为唯一源，32px 窗口 / 托盘图像、PE/ICO、ICNS 和 1024px 预览均由它派生。
+
+## 0.1.12 Windows PE 元数据修复
+
+0.1.12 延续 0.1.11 的域名绕过和新 Logo。针对 Windows 构建在写入 Win32 resource 后移动 `.symtab` 未同步更新 COFF `PointerToSymbolTable` 的问题，本版本补充 PE 元数据门禁：打包客户端必须保留可读取的 Go 构建信息，`go version -m` 作为发布前回归检查；资源和符号表校验失败时不得进入 Release 资产发布。该门禁不改变代理运行时行为，也不替代 Codex 真实业务流量或 Mac 实机验收。
+
+本地 `scripts/test-set-icon.ps1` 已通过：真实 Go fixture 分别保留和剥离符号，检查完整符号 / 字符串表字节不变、COFF 长节名可读、`go tool nm` / `objdump` 正常，以及重复写入图标后仍可读取元数据。普通 GUI 与 `-KeepSymbols` 客户端 / helper 构建均通过最终元数据检查；普通构建使用临时配置运行 `--check` 返回 `Version=0.1.12`，用户配置哈希在检查前后相同。工作流静态检查和发布校验脚本的 6 项测试通过。
 
 ## 0.1.10 发布草稿与跨平台校验
 

@@ -4,7 +4,7 @@
 
 ## 版本与标签
 
-0.1.11 的发布标签应为 `v0.1.11`，并与根目录 `VERSION`、产品入口和 macOS `Info.plist` 中的版本保持一致。Go 程序直接嵌入 `VERSION`，无需分别维护界面与诊断版本。新版本发布前应检查：
+0.1.12 的发布标签应为 `v0.1.12`，并与根目录 `VERSION`、产品入口和 macOS `Info.plist` 中的版本保持一致。Go 程序直接嵌入 `VERSION`，无需分别维护界面与诊断版本。新版本发布前应检查：
 
 - 根目录 `VERSION` 与发布标签；
 - `scripts/pack.ps1` 与 `scripts/pack-macos.ps1` 的输出目录及默认版本；
@@ -30,7 +30,7 @@
 
 ```powershell
 .\scripts\pack.ps1 `
-  -OutputDir dist\release-0.1.11 `
+  -OutputDir dist\release-0.1.12 `
   -Proxy http://127.0.0.1:7897
 ```
 
@@ -48,8 +48,8 @@ Windows 上可以交叉编译两个架构：
 
 ```powershell
 .\scripts\pack-macos.ps1 `
-  -OutputDir dist\release-0.1.11-macos `
-  -Version 0.1.11
+  -OutputDir dist\release-0.1.12-macos `
+  -Version 0.1.12
 ```
 
 产物为 `ProxyStart-macos-arm64.zip` 和 `ProxyStart-macos-amd64.zip`。脚本检查 Mach-O 架构、`MH_EXECUTE` 文件类型、`.app` 目录布局、ZIP 内 Unix 权限和 SHA-256。它不完成 Developer ID 签名或 Apple 公证。
@@ -68,14 +68,14 @@ xcrun stapler staple "Proxy Start.app"
 
 证书、私钥和 `notarytool` profile 不进入仓库或 CI 日志。
 
-## 0.1.11 变更说明（Release notes 草稿）
+## 0.1.12 变更说明
 
-- 新增代理配置的域名绕过规则：统一用于 Codex 原生启动和代理控制台；非空规则覆盖 `NO_PROXY` / `no_proxy`，空规则清理继承值。
-- 强制代理模式遇到域名绕过规则会在启动前明确拒绝，并保留现有进程。
-- 使用单一 SVG 源更新品牌图标，并派生窗口、托盘、PE/ICO、ICNS 和 1024px 预览资源。
-- Windows 控制台 HTTP / SOCKS5 分流和不可达代理不回退直连的实测记录已更新；Codex 真实业务流量与 Mac 实机 GUI / 网络仍待验收。
+- 延续 0.1.11 的代理配置域名绕过规则和单一 SVG Logo，统一用于 Codex 原生启动与代理控制台，并派生窗口、托盘、PE/ICO、ICNS 和 1024px 资源。
+- 修复写入 Win32 resource 后移动 `.symtab` 未更新 COFF `PointerToSymbolTable` 的 Windows PE 构建元数据问题，确保 `go version -m` 可读取打包客户端信息。
+- 新增发布门禁，回归检查 PE 资源、符号表位置和 Go 构建元数据；Windows 控制台 HTTP / SOCKS5 分流和不可达代理不回退直连的实测记录继续有效。
+- Codex 真实业务流量与 Mac 实机 GUI / 网络仍待验收。
 
-本节是待 CI 发布的 0.1.11 Release notes 草稿；发布成功前不要将其表述为已上线版本。
+本节对应 0.1.12 的变更，实际构建与发布状态以 GitHub Actions 和 Release 页面为准。0.1.11 的变更说明保留在 [更新日志](../CHANGELOG.md) 和历史验证记录中。
 
 ## 发布前验证
 

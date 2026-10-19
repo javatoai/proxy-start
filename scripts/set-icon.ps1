@@ -90,6 +90,162 @@ function Set-U32([byte[]]$Buffer, [int]$Offset, [UInt64]$Value) {
     $Buffer[$Offset + 3] = [byte](($number -shr 24) -band 0xff)
 }
 
+function Get-U16([byte[]]$Buffer, [int]$Offset) {
+    if ($Offset -lt 0 -or $Offset + 2 -gt $Buffer.Length) {
+        throw "PE 字段超出文件范围（偏移 $Offset）。"
+    }
+    return [uint16]($Buffer[$Offset] -bor ($Buffer[$Offset + 1] -shl 8))
+}
+
+function Get-U32([byte[]]$Buffer, [int]$Offset) {
+    if ($Offset -lt 0 -or $Offset + 4 -gt $Buffer.Length) {
+        throw "PE 字段超出文件范围（偏移 $Offset）。"
+    }
+    $number = [uint32]$Buffer[$Offset]
+    $number = $number -bor ([uint32]$Buffer[$Offset + 1] -shl 8)
+    $number = $number -bor ([uint32]$Buffer[$Offset + 2] -shl 16)
+    $number = $number -bor ([uint32]$Buffer[$Offset + 3] -shl 24)
+    return [uint32]$number
+}
+
+function Test-ByteArrayEqual([byte[]]$Left, [byte[]]$Right) {
+    if ($null -eq $Left -or $null -eq $Right -or $Left.Length -ne $Right.Length) {
+        return $false
+    }
+    for ($index = 0; $index -lt $Left.Length; $index++) {
+        if ($Left[$index] -ne $Right[$index]) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Read-PeLayout([string]$Path) {
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+        throw "目标不是有效的 DOS/PE 文件：$Path"
+    }
+    $peOffset = [int](Get-U32 $bytes 0x3c)
+    if ($peOffset -lt 0 -or $peOffset + 24 -gt $bytes.Length) {
+        throw "PE 头偏移越界：$Path"
+    }
+    if ($bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45 -or $bytes[$peOffset + 2] -ne 0 -or $bytes[$peOffset + 3] -ne 0) {
+        throw "PE 签名无效：$Path"
+    }
+
+    $numberOfSections = [int](Get-U16 $bytes ($peOffset + 6))
+    $sizeOfOptionalHeader = [int](Get-U16 $bytes ($peOffset + 20))
+    $sectionTableOffset = $peOffset + 24 + $sizeOfOptionalHeader
+    $sectionTableEnd = [int64]$sectionTableOffset + (40L * $numberOfSections)
+    if ($numberOfSections -lt 1 -or $sectionTableEnd -gt $bytes.Length) {
+        throw "PE 节表越界：$Path"
+    }
+
+    $sections = @()
+    for ($index = 0; $index -lt $numberOfSections; $index++) {
+        $offset = $sectionTableOffset + (40 * $index)
+        $nameBytes = New-Object byte[] 8
+        [Array]::Copy($bytes, $offset, $nameBytes, 0, 8)
+        $virtualSize = [uint32](Get-U32 $bytes ($offset + 8))
+        $virtualAddress = [uint32](Get-U32 $bytes ($offset + 12))
+        $rawSize = [uint32](Get-U32 $bytes ($offset + 16))
+        $rawPointer = [uint32](Get-U32 $bytes ($offset + 20))
+        $characteristics = [uint32](Get-U32 $bytes ($offset + 36))
+        if ($rawSize -gt 0 -and ([uint64]$rawPointer + [uint64]$rawSize -gt [uint64]$bytes.Length)) {
+            throw "PE 节的原始数据越界（节 $index）：$Path"
+        }
+        $sections += [pscustomobject]@{
+            Index = $index
+            NameBytes = $nameBytes
+            VirtualSize = $virtualSize
+            VirtualAddress = $virtualAddress
+            RawSize = $rawSize
+            RawPointer = $rawPointer
+            Characteristics = $characteristics
+        }
+    }
+
+    return [pscustomobject]@{
+        Bytes = $bytes
+        PeOffset = $peOffset
+        CoffPointerOffset = $peOffset + 12
+        SymbolTablePointer = [uint32](Get-U32 $bytes ($peOffset + 12))
+        NumberOfSymbols = [uint32](Get-U32 $bytes ($peOffset + 16))
+        Sections = $sections
+    }
+}
+
+function Get-PeSymbolAnchor([string]$Path) {
+    $layout = Read-PeLayout $Path
+    if ($layout.SymbolTablePointer -eq 0) {
+        return [pscustomobject]@{ HasSymbolTable = $false }
+    }
+
+    $symbolPointer = [uint64]$layout.SymbolTablePointer
+    $matches = @($layout.Sections | Where-Object {
+        $_.RawSize -gt 0 -and
+        $symbolPointer -ge [uint64]$_.RawPointer -and
+        $symbolPointer -lt ([uint64]$_.RawPointer + [uint64]$_.RawSize)
+    })
+    if ($matches.Count -ne 1) {
+        throw "COFF 符号表指针不在唯一节内（指针 0x$('{0:X8}' -f $layout.SymbolTablePointer)）：$Path"
+    }
+    $section = $matches[0]
+    return [pscustomobject]@{
+        HasSymbolTable = $true
+        NameBytes = [byte[]]$section.NameBytes
+        VirtualSize = [uint32]$section.VirtualSize
+        RawSize = [uint32]$section.RawSize
+        Characteristics = [uint32]$section.Characteristics
+        OffsetWithinSection = [uint64]$symbolPointer - [uint64]$section.RawPointer
+    }
+}
+
+function Repair-PeSymbolTablePointer([string]$Path, [pscustomobject]$Anchor) {
+    if (-not $Anchor.HasSymbolTable) {
+        return
+    }
+    $layout = Read-PeLayout $Path
+    $matches = @($layout.Sections | Where-Object {
+        $_.RawSize -eq $Anchor.RawSize -and
+        $_.VirtualSize -eq $Anchor.VirtualSize -and
+        $_.Characteristics -eq $Anchor.Characteristics -and
+        (Test-ByteArrayEqual $_.NameBytes $Anchor.NameBytes)
+    })
+    if ($matches.Count -ne 1) {
+        throw "注入后无法唯一定位原 COFF 符号表节（匹配数 $($matches.Count)）：$Path"
+    }
+
+    $section = $matches[0]
+    $newPointer = [uint64]$section.RawPointer + [uint64]$Anchor.OffsetWithinSection
+    if ($newPointer -gt [uint64][uint32]::MaxValue -or $newPointer -ge [uint64]$layout.Bytes.Length) {
+        throw "注入后 COFF 符号表指针越界（0x$('{0:X}' -f $newPointer)）：$Path"
+    }
+    if ([uint32]$newPointer -eq $layout.SymbolTablePointer) {
+        return
+    }
+
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $stream.Seek($layout.CoffPointerOffset, [IO.SeekOrigin]::Begin) | Out-Null
+        $patch = [BitConverter]::GetBytes([uint32]$newPointer)
+        $stream.Write($patch, 0, $patch.Length)
+        $stream.Flush()
+    }
+    finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+
+    $verified = Read-PeLayout $Path
+    if ([uint32]$newPointer -ne $verified.SymbolTablePointer) {
+        throw "COFF 符号表指针修复后校验失败：$Path"
+    }
+    Write-Host ("已修复 COFF 符号表指针：0x{0:X8} -> 0x{1:X8}" -f $layout.SymbolTablePointer, $newPointer) -ForegroundColor DarkGray
+}
+
 try {
     $isWindowsHost = $env:OS -eq "Windows_NT"
     $isWindowsVariable = Get-Variable -Name IsWindows -ErrorAction SilentlyContinue
@@ -154,6 +310,12 @@ try {
         }
     }
 
+    # BeginUpdateResourceW may insert a .rsrc section before the existing
+    # relocation/symbol sections. Capture the COFF symbol table's section and
+    # its in-section offset before that happens; the resource API can leave
+    # PointerToSymbolTable at its old absolute file offset.
+    $symbolAnchor = Get-PeSymbolAnchor $exe
+
     # GRPICONDIR/GRPICONDIRENTRY is the ICO directory with a 16-bit resource
     # identifier in place of each image's file offset.
     $groupBytes = New-Object byte[] (6 + (14 * $entries.Count))
@@ -198,6 +360,7 @@ try {
     }
     $resourceHandle = [IntPtr]::Zero
     $resourceCommitted = $true
+    Repair-PeSymbolTablePointer $exe $symbolAnchor
     Write-Host "已嵌入 Windows 图标：$exe（$($entries.Count) 个尺寸）" -ForegroundColor Green
 }
 catch {

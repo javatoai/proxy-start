@@ -55,6 +55,21 @@ foreach ($name in $environmentNames) {
     $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
 
+function Assert-GoBuildInfo([string]$Binary, [string]$ExpectedPath) {
+    # Windows resource updates can leave stale COFF offsets even when the
+    # loader still runs the executable. Parse the final PE before hashing it
+    # or allowing packaging to continue.
+    $buildInfoJSON = & $goExe version -m -json $Binary
+    if ($LASTEXITCODE -ne 0) {
+        throw "Windows 图标注入后的 Go 构建信息不可读：$Binary"
+    }
+    $buildInfo = ($buildInfoJSON -join "`n") | ConvertFrom-Json
+    if ($null -eq $buildInfo -or $buildInfo.Path -ne $ExpectedPath -or $buildInfo.GoVersion -ne 'go1.27.2') {
+        throw "Windows 产物的 Go 构建信息不匹配：$Binary"
+    }
+    Write-Host ("已验证 Go 构建信息：$ExpectedPath") -ForegroundColor DarkGray
+}
+
 try {
     Push-Location -LiteralPath $projectRoot
     $pushedLocation = $true
@@ -126,6 +141,7 @@ try {
     Write-Host "> set Windows icon (helper)" -ForegroundColor DarkGray
     & $iconScript -ExePath $helperOutput -IconPath $iconSource
     if ($LASTEXITCODE -ne 0) { throw "helper 图标资源注入失败。" }
+    Assert-GoBuildInfo $helperOutput 'proxy-start/cmd/proxy-start-helper'
     $helperSHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $helperOutput).Hash.ToLowerInvariant()
     Write-Host ("已生成 helper：$helperOutput") -ForegroundColor Green
     Write-Host ("helper SHA-256：$helperSHA256") -ForegroundColor DarkGray
@@ -141,6 +157,7 @@ try {
     Write-Host "> set Windows icon (client)" -ForegroundColor DarkGray
     & $iconScript -ExePath $mainOutput -IconPath $iconSource
     if ($LASTEXITCODE -ne 0) { throw "客户端图标资源注入失败。" }
+    Assert-GoBuildInfo $mainOutput 'proxy-start/cmd/proxy-start'
     Write-Host ("已生成：$mainOutput（内嵌 helper SHA-256：$helperSHA256）") -ForegroundColor Green
 
     Write-Host "构建完成。" -ForegroundColor Green

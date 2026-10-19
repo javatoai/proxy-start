@@ -49,7 +49,13 @@ Expand-Archive '.tools/go1.27.2.windows-amd64.zip' -DestinationPath '.tools' -Fo
 
 `-GUI` 只改变链接子系统，不改变客户端的诊断参数或辅助进程协议。
 
-构建顺序固定为先生成 `proxy-start-helper.exe`，再计算其 SHA-256 并通过 `-X main.helperSHA256=...` 写入主程序。客户端启动 helper 前会校验这个摘要；即使使用控制台调试构建，也会保留同一完整性绑定。
+构建顺序固定为先生成 `proxy-start-helper.exe`，写入图标、修复并验证 PE 构建元数据，再计算其 SHA-256 并通过 `-X main.helperSHA256=...` 写入主程序。主程序写入图标后也执行 `go version -m -json` 检查。客户端启动 helper 前会校验这个摘要；即使使用控制台调试构建，也会保留同一完整性绑定。
+
+图标打包回归检查使用临时 Go 程序，覆盖保留 / 剥离符号、完整符号表和字符串表、长节名与重复写入；不启动用户应用：
+
+```powershell
+.\scripts\test-set-icon.ps1
+```
 
 ## 运行
 
@@ -77,7 +83,7 @@ Expand-Archive '.tools/go1.27.2.windows-amd64.zip' -DestinationPath '.tools' -Fo
 
 编辑器接受换行或逗号分隔的 ASCII 主机名、域名和 Punycode；规则会小写化、去重，`example.com` 覆盖根域及子域。URL、端口、通配符和 IP/CIDR 会被拒绝。Codex 原生启动支持这些规则；若应用只能回退到 Windows 强制代理，带规则的启动会在结束现有进程或申请代理资源前拒绝，并保留原进程。强制代理不会把域名规则写入 ProxiFyre 的路径排除项。
 
-真实 HTTP / SOCKS5 请求及不可达代理对照的可重复测试见 [控制台验证记录](CONSOLE-VERIFICATION.md)。发布版本由根目录 `VERSION` 提供，当前目标版本为 `0.1.11`；诊断输出和 UI 共享该值，标签和 macOS 包版本也必须与之匹配。域名绕过规则和新 SVG 品牌图标均随该版本构建。
+真实 HTTP / SOCKS5 请求及不可达代理对照的可重复测试见 [控制台验证记录](CONSOLE-VERIFICATION.md)。发布版本由根目录 `VERSION` 提供，当前目标版本为 `0.1.12`；诊断输出和 UI 共享该值，标签和 macOS 包版本也必须与之匹配。域名绕过规则、新 SVG 品牌图标和 Windows PE 元数据门禁均随该版本构建。
 
 ## 原生界面预览
 

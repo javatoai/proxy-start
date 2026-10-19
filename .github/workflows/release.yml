@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build (for example v0.1.11)
+        description: Existing version tag to build (for example v0.1.12)
         required: true
-        default: v0.1.11
+        default: v0.1.12
         type: string
 
 permissions:
@@ -152,6 +152,11 @@ jobs:
           $env:PROXY_START_CONSOLE_BYPASS_REAL = '1'
           go test ./internal/platform/console -run '^TestWindows(ChildEnvironment(Bypass)?Integration|ConsoleProxyBypassRoutingIntegration)$' -count=1
           if ($LASTEXITCODE -ne 0) { throw 'Windows console environment or bypass routing test failed' }
+
+      - name: Verify Windows icon resources and PE metadata
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: ./scripts/test-set-icon.ps1 -GoExe go
 
       - name: Run native macOS tests
         if: matrix.platform == 'macos'
