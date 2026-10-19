@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$OutputDir = "",
     [switch]$SkipTests,
@@ -96,6 +96,14 @@ try {
 
     $helperPackage = "./cmd/proxy-start-helper"
     $mainPackage = "./cmd/proxy-start"
+    $iconScript = Join-Path $PSScriptRoot "set-icon.ps1"
+    $iconSource = Join-Path $projectRoot "assets\proxy-start.ico"
+    if (-not (Test-Path -LiteralPath $iconScript -PathType Leaf)) {
+        throw "缺少 Windows 图标注入脚本：$iconScript"
+    }
+    if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
+        throw "缺少 Proxy Start Windows 图标资源：$iconSource"
+    }
     foreach ($package in @($helperPackage, $mainPackage)) {
         $packageDir = Join-Path $projectRoot ($package -replace '^\./', '').Replace('/', '\')
         if (-not (Test-Path -LiteralPath $packageDir -PathType Container)) {
@@ -115,6 +123,9 @@ try {
     Write-Host ("> go " + ($helperArgs -join " ")) -ForegroundColor DarkGray
     & $goExe @helperArgs
     if ($LASTEXITCODE -ne 0) { throw "构建失败：$helperPackage" }
+    Write-Host "> set Windows icon (helper)" -ForegroundColor DarkGray
+    & $iconScript -ExePath $helperOutput -IconPath $iconSource
+    if ($LASTEXITCODE -ne 0) { throw "helper 图标资源注入失败。" }
     $helperSHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $helperOutput).Hash.ToLowerInvariant()
     Write-Host ("已生成 helper：$helperOutput") -ForegroundColor Green
     Write-Host ("helper SHA-256：$helperSHA256") -ForegroundColor DarkGray
@@ -127,6 +138,9 @@ try {
     Write-Host ("> go " + ($mainArgs -join " ")) -ForegroundColor DarkGray
     & $goExe @mainArgs
     if ($LASTEXITCODE -ne 0) { throw "构建失败：$mainPackage" }
+    Write-Host "> set Windows icon (client)" -ForegroundColor DarkGray
+    & $iconScript -ExePath $mainOutput -IconPath $iconSource
+    if ($LASTEXITCODE -ne 0) { throw "客户端图标资源注入失败。" }
     Write-Host ("已生成：$mainOutput（内嵌 helper SHA-256：$helperSHA256）") -ForegroundColor Green
 
     Write-Host "构建完成。" -ForegroundColor Green

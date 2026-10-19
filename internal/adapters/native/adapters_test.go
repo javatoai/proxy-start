@@ -2,10 +2,20 @@ package native
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"proxy-start/internal/domain"
 )
+
+func emptyBypassPolicy(t *testing.T) domain.BypassPolicy {
+	t.Helper()
+	policy, err := domain.NewBypassPolicy(nil)
+	if err != nil {
+		t.Fatalf("empty bypass policy: %v", err)
+	}
+	return policy
+}
 
 func TestCodexMatchRequiresPackageAndKnownExecutable(t *testing.T) {
 	adapter := NewCodex()
@@ -130,18 +140,19 @@ func TestCodexSupportsAndPlansHTTPWithoutCredentials(t *testing.T) {
 	}
 	original := append([]string(nil), identity.Arguments...)
 	proxy := domain.ProxyEndpoint{Protocol: domain.ProtocolAuto, Host: "127.0.0.1", Port: 7897}
+	bypass := emptyBypassPolicy(t)
 
-	if !adapter.Supports(proxy) {
+	if !adapter.Supports(proxy, bypass) {
 		t.Fatal("Codex should accept an auto-detected mixed HTTP endpoint")
 	}
-	if adapter.Supports(domain.ProxyEndpoint{Protocol: domain.ProtocolSOCKS5, Host: "127.0.0.1", Port: 7897}) {
+	if adapter.Supports(domain.ProxyEndpoint{Protocol: domain.ProtocolSOCKS5, Host: "127.0.0.1", Port: 7897}, bypass) {
 		t.Fatal("Codex must not claim SOCKS5 support")
 	}
-	if adapter.Supports(domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897, Username: "user"}) {
+	if adapter.Supports(domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897, Username: "user"}, bypass) {
 		t.Fatal("Codex must not claim authenticated proxy support")
 	}
 
-	spec, err := adapter.Plan(identity, proxy)
+	spec, err := adapter.Plan(identity, proxy, bypass)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -176,7 +187,7 @@ func TestCodexPlansMacOSBundleWithTheSameProxySpec(t *testing.T) {
 		PackageName: macCodexBundleID,
 		Arguments:   []string{"--profile-directory=Default", "--proxy-server", "http://old:1"},
 	}
-	spec, err := adapter.Plan(identity, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897})
+	spec, err := adapter.Plan(identity, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897}, emptyBypassPolicy(t))
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -186,6 +197,45 @@ func TestCodexPlansMacOSBundleWithTheSameProxySpec(t *testing.T) {
 	}
 	if spec.Identity.PackageName != macCodexBundleID {
 		t.Fatalf("identity bundle id = %q, want %q", spec.Identity.PackageName, macCodexBundleID)
+	}
+}
+
+func TestCodexPlansCanonicalBypassListAndEnvironment(t *testing.T) {
+	adapter := NewCodex()
+	identity := domain.AppIdentity{
+		Executable:  `C:\Apps\ChatGPT.exe`,
+		PackageName: "OpenAI.Codex",
+		Arguments:   []string{"--proxy-bypass-list", "old.test", "--proxy-bypass-list=stale.test", "--proxy-server=http://old:1"},
+	}
+	policy, err := domain.NewBypassPolicy([]string{"Example.com", "API.Example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := adapter.Plan(identity, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBypass := "--proxy-bypass-list=" + strings.Join([]string{policy.Domains()[0], "*." + policy.Domains()[0], policy.Domains()[1], "*." + policy.Domains()[1]}, ";")
+	count := 0
+	for _, arg := range spec.Arguments {
+		if strings.HasPrefix(arg, "--proxy-bypass-list=") {
+			count++
+			if arg != wantBypass {
+				t.Fatalf("bypass argument = %q, want %q", arg, wantBypass)
+			}
+		}
+		if arg == "old.test" || arg == "stale.test" {
+			t.Fatalf("stale bypass argument remained: %#v", spec.Arguments)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("bypass argument count = %d, want 1 (%#v)", count, spec.Arguments)
+	}
+	if spec.Environment["NO_PROXY"] != strings.Join(policy.Domains(), ",") || spec.Environment["no_proxy"] != spec.Environment["NO_PROXY"] {
+		t.Fatalf("bypass environment = %#v", spec.Environment)
+	}
+	if len(spec.UnsetEnvironment) != 0 {
+		t.Fatalf("bypass environment unexpectedly unset: %#v", spec.UnsetEnvironment)
 	}
 }
 
@@ -208,10 +258,10 @@ func TestProductionRegistryContainsOnlyCodex(t *testing.T) {
 func TestPlanRejectsInvalidIdentityOrProxy(t *testing.T) {
 	identity := domain.AppIdentity{Executable: `C:\Apps\ChatGPT.exe`, PackageName: "OpenAI.Codex"}
 	adapter := NewCodex()
-	if _, err := adapter.Plan(identity, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "", Port: 7897}); err == nil {
+	if _, err := adapter.Plan(identity, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "", Port: 7897}, emptyBypassPolicy(t)); err == nil {
 		t.Fatal("Plan should reject an invalid endpoint")
 	}
-	if _, err := adapter.Plan(domain.AppIdentity{Executable: `C:\Apps\ChatGPT.exe`}, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897}); err == nil {
+	if _, err := adapter.Plan(domain.AppIdentity{Executable: `C:\Apps\ChatGPT.exe`}, domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "127.0.0.1", Port: 7897}, emptyBypassPolicy(t)); err == nil {
 		t.Fatal("Plan should reject an identity without Codex package metadata")
 	}
 }

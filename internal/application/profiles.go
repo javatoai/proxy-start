@@ -31,6 +31,11 @@ func (s *profileService) saveResult(ctx context.Context, p domain.ProxyProfile, 
 	if err := p.Validate(); err != nil {
 		return domain.ProxyProfile{}, err
 	}
+	bypass, err := domain.NewBypassPolicy(p.BypassDomains)
+	if err != nil {
+		return domain.ProxyProfile{}, err
+	}
+	p.BypassDomains = bypass.Domains()
 	if p.ID == "" {
 		p.ID = newID()
 	}
@@ -97,6 +102,7 @@ func (s *profileService) saveResult(ctx context.Context, p domain.ProxyProfile, 
 		}
 		return domain.ProxyProfile{}, err
 	}
+	p.BypassDomains = append([]string(nil), p.BypassDomains...)
 	return p, nil
 }
 
@@ -242,6 +248,19 @@ func (s *profileService) restoreCredential(ref, secret string, existed bool) err
 }
 
 func (s *profileService) endpoint(ctx context.Context, p domain.ProxyProfile) (domain.ProxyEndpoint, error) {
+	resolved, err := s.resolve(ctx, p)
+	return resolved.Endpoint, err
+}
+
+// resolvedProfile keeps route policy, endpoint and credentials from one
+// serialized profile snapshot. Probes still receive only the endpoint.
+type resolvedProfile struct {
+	Profile  domain.ProxyProfile
+	Endpoint domain.ProxyEndpoint
+	Bypass   domain.BypassPolicy
+}
+
+func (s *profileService) resolve(ctx context.Context, p domain.ProxyProfile) (resolvedProfile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Callers often resolve a profile immediately before this method. Refresh
@@ -250,11 +269,20 @@ func (s *profileService) endpoint(ctx context.Context, p domain.ProxyProfile) (d
 	if p.ID != "" {
 		latest, err := s.repository.profile(p.ID)
 		if err != nil {
-			return domain.ProxyEndpoint{}, err
+			return resolvedProfile{}, err
 		}
 		p = latest
 	}
-	return s.endpointUnlocked(ctx, p)
+	bypass, err := domain.NewBypassPolicy(p.BypassDomains)
+	if err != nil {
+		return resolvedProfile{}, err
+	}
+	endpoint, err := s.endpointUnlocked(ctx, p)
+	if err != nil {
+		return resolvedProfile{}, err
+	}
+	p.BypassDomains = bypass.Domains()
+	return resolvedProfile{Profile: p, Endpoint: endpoint, Bypass: bypass}, nil
 }
 
 func (s *profileService) endpointUnlocked(ctx context.Context, p domain.ProxyProfile) (domain.ProxyEndpoint, error) {

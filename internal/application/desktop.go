@@ -176,10 +176,11 @@ func (d *Desktop) OpenProxyConsole(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	endpoint, err := d.profiles.endpoint(ctx, profile)
+	resolved, err := d.profiles.resolve(ctx, profile)
 	if err != nil {
 		return err
 	}
+	endpoint := resolved.Endpoint
 	protocol := endpoint.Protocol
 	if protocol == domain.ProtocolAuto {
 		probe, probeErr := d.profiles.probe.Test(ctx, endpoint)
@@ -195,11 +196,11 @@ func (d *Desktop) OpenProxyConsole(ctx context.Context, id string) error {
 			return fmt.Errorf("未验证出可用的 HTTP 或 SOCKS5 代理")
 		}
 	}
-	environment, unset, err := BuildProxyEnvironment(endpoint, protocol)
+	environment, unset, err := BuildProxyEnvironment(endpoint, protocol, resolved.Bypass)
 	if err != nil {
 		return err
 	}
-	return d.console.Open(ctx, ConsoleSpec{ProfileName: profile.Name, Environment: environment, UnsetEnvironment: unset})
+	return d.console.Open(ctx, ConsoleSpec{ProfileName: resolved.Profile.Name, Environment: environment, UnsetEnvironment: unset})
 }
 func (d *Desktop) Start(ctx context.Context, id string) error   { return d.launcher.start(ctx, id) }
 func (d *Desktop) Stop(ctx context.Context, id string) error    { return d.launcher.stop(ctx, id) }

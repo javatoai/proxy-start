@@ -232,6 +232,8 @@ The system is flat by default and declares no shadow or motion vocabulary. Depth
 
 The native theme radius is 8px and is carried by controls, navigation rows, search/filter surfaces, profile items, and table/inspector containers. Detail/error surfaces use a quiet 6px radius; the installed-app modal uses 12px. Table rows remain square so the list reads as one continuous surface; selection uses a filled tint rather than a capsule. Borders are one pixel and theme-derived, with a two-pixel accent border during drag-over.
 
+The product mark is authored in `assets/proxy-start.svg`, whose `64×64` viewBox contains a `60×60` `{colors.brand-blue}` tile at `(2,2)` with a `16px` corner radius, a solid white geometric P, and a blue triangular play cutout (`M27 18.5L44 28L27 37.5Z`) with a `1.2px` round join. This source is the identity for the embedded UI SVG and all native raster/icon derivatives; it communicates choosing a route and starting it, not proxy connectivity.
+
 ## Components
 
 ### Buttons
@@ -263,6 +265,10 @@ The native theme radius is 8px and is carried by controls, navigation rows, sear
 ### Navigation
 
 The rail is 214px wide with the 32px geometric brand mark, an 18px/600 product name, a concise 12px subtitle, a one-pixel divider, and three 40px workspace destinations for 应用, 代理设置, and 系统设置. The active destination is a filled product-blue row with a 17px line icon, 10px icon/text gap, and white 14px/500 text; the inactive row stays quiet and uses the theme surface-hover on hover. The rail contains only the brand lockup and workspace navigation; no component status or tray explanation returns to its bottom edge.
+
+### Product Mark
+
+The sidebar, window, tray, shortcut, and package assets use the same `assets/proxy-start.svg` source. Preserve its white P silhouette and blue negative play triangle at every size; the enlarged triangle validated in the finish review keeps the 16px raster legible. The mark has no lettering dependency, gradients, shading, or alternate code-drawn geometry. The finish review for this mark resolved the material fix, found the remaining checks clear, and assigned the mark a `ship` disposition; that verdict applies only to this brand asset.
 
 ### Application Table
 
@@ -305,6 +311,7 @@ Prefer Start-menu and manifest display names, with executable metadata as a fall
 - **Do** let proxy and system settings scroll within their own content columns, keep modal actions in one wrapping row, and place operation feedback in the top-right toast viewport.
 - **Do** expose real operation progress, disabled duplicate actions, wrapped errors, and clear recovery actions.
 - **Do** keep drag-and-drop discoverable through the table surface and a restrained accent border while dragging.
+- **Do** derive the embedded SVG and native icon assets from `assets/proxy-start.svg`, retaining the blue tile, white P, and forward play cutout.
 
 ### Don't:
 
@@ -313,3 +320,4 @@ Prefer Start-menu and manifest display names, with executable metadata as a fall
 - **Don't** hide the selected-program inspector in repeated table rows or make it permanently consume narrow-window width.
 - **Don't** claim proxy connectivity because a target process started; retain the distinction between applied, running, and verified.
 - **Don't** replace native Windows controls with web-shaped controls, oversized cards, or a decorative empty drop zone.
+- **Don't** reintroduce a parallel Go geometry or a different logo shape in any UI or platform asset.

@@ -21,6 +21,15 @@ import (
 	"time"
 )
 
+func emptyBypassPolicyForTest(t *testing.T) domain.BypassPolicy {
+	t.Helper()
+	policy, err := domain.NewBypassPolicy(nil)
+	if err != nil {
+		t.Fatalf("empty bypass policy: %v", err)
+	}
+	return policy
+}
+
 // Opt-in because it starts a short-lived PowerShell process. It only inspects
 // a process created by this test and never opens the user's interactive shell.
 func TestWindowsChildEnvironmentIntegration(t *testing.T) {
@@ -32,7 +41,7 @@ func TestWindowsChildEnvironmentIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixturePassword := "fixture-password-never-argv"
-	proxyEnv, unset, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: "127.0.0.1", Port: 7897, Username: "fixture-user", Password: fixturePassword}, domain.ProtocolHTTP)
+	proxyEnv, unset, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: "127.0.0.1", Port: 7897, Username: "fixture-user", Password: fixturePassword}, domain.ProtocolHTTP, emptyBypassPolicyForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +63,51 @@ func TestWindowsChildEnvironmentIntegration(t *testing.T) {
 	}
 	if os.Getenv("HTTP_PROXY") != parentHTTPProxy {
 		t.Fatal("parent process environment was modified")
+	}
+}
+
+// TestWindowsChildEnvironmentBypassIntegration is an opt-in real child
+// process check. It proves that a non-empty bypass policy replaces inherited
+// NO_PROXY values in the PowerShell child while leaving the parent untouched.
+func TestWindowsChildEnvironmentBypassIntegration(t *testing.T) {
+	if os.Getenv("PROXY_START_CONSOLE_REAL") != "1" {
+		t.Skip("set PROXY_START_CONSOLE_REAL=1 to run the Windows bypass environment check")
+	}
+	powershell, err := powershellPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := domain.NewBypassPolicy([]string{"Example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyEnv, unset, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: "127.0.0.1", Port: 7897}, domain.ProtocolHTTP, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyEnv["PROXY_START_CONSOLE_BYPASS_VALUE"] = "child-only"
+	previous, had := os.LookupEnv("NO_PROXY")
+	_ = os.Setenv("NO_PROXY", "parent.example")
+	defer func() {
+		if had {
+			_ = os.Setenv("NO_PROXY", previous)
+		} else {
+			_ = os.Unsetenv("NO_PROXY")
+		}
+	}()
+	cmd := exec.Command(powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output ($env:PROXY_START_CONSOLE_BYPASS_VALUE + '|' + $env:HTTP_PROXY + '|' + [string]$env:NO_PROXY + '|' + [string]$env:no_proxy)")
+	cmd.Env = childEnvironment(proxyEnv, unset)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bypass child process failed: %v", err)
+	}
+	fields := strings.SplitN(strings.TrimSpace(string(output)), "|", 4)
+	wantBypass := strings.Join(policy.Domains(), ",")
+	if len(fields) != 4 || fields[0] != "child-only" || fields[1] != proxyEnv["HTTP_PROXY"] || fields[2] != wantBypass || fields[3] != wantBypass {
+		t.Fatalf("child bypass environment = %q, want proxy and %q in both cases", output, wantBypass)
+	}
+	if got := os.Getenv("NO_PROXY"); got != "parent.example" {
+		t.Fatalf("parent NO_PROXY changed to %q", got)
 	}
 }
 
@@ -85,7 +139,7 @@ func TestWindowsConsoleProxyNetworkIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxyEnv, unsetEnvironment, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: forwarderHost, Port: forwarderPort}, domain.ProtocolHTTP)
+	proxyEnv, unsetEnvironment, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: forwarderHost, Port: forwarderPort}, domain.ProtocolHTTP, emptyBypassPolicyForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +188,7 @@ func TestWindowsConsoleProxyNetworkIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	badProxy, badUnsetEnvironment, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: badHost, Port: badPort}, domain.ProtocolHTTP)
+	badProxy, badUnsetEnvironment, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: badHost, Port: badPort}, domain.ProtocolHTTP, emptyBypassPolicyForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +210,7 @@ func TestWindowsConsoleProxyNetworkIntegration(t *testing.T) {
 	// branch verifies the other environment form without adding a second test
 	// proxy or passing --proxy to curl.
 	socksResultPath := filepath.Join(t.TempDir(), "curl-socks-result.txt")
-	socksEnvironment, socksUnsetEnvironment, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: "127.0.0.1", Port: 7897}, domain.ProtocolSOCKS5)
+	socksEnvironment, socksUnsetEnvironment, err := application.BuildProxyEnvironment(domain.ProxyEndpoint{Host: "127.0.0.1", Port: 7897}, domain.ProtocolSOCKS5, emptyBypassPolicyForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}

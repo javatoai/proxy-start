@@ -42,6 +42,23 @@ func TestMergedEnvironmentOverridesAndUnsets(t *testing.T) {
 	}
 }
 
+func TestMergedEnvironmentCarriesBothBypassVariableCases(t *testing.T) {
+	values := mergedEnvironment(map[string]string{
+		"NO_PROXY": "example.com,api.example",
+		"no_proxy": "example.com,api.example",
+	}, nil)
+	if !containsEnvironment(values, "NO_PROXY", "example.com,api.example") || !containsEnvironment(values, "no_proxy", "example.com,api.example") {
+		t.Fatalf("bypass environment cases were not preserved: %#v", values)
+	}
+	values = mergedEnvironment(map[string]string{
+		"NO_PROXY": "example.com",
+		"no_proxy": "example.com",
+	}, []string{"NO_PROXY", "no_proxy"})
+	if containsEnvironment(values, "NO_PROXY", "") || containsEnvironment(values, "no_proxy", "") {
+		t.Fatalf("unset bypass variables remained: %#v", values)
+	}
+}
+
 func TestLocaleEnvironmentForcesStablePSOutput(t *testing.T) {
 	values := localeEnvironment()
 	count := 0

@@ -16,7 +16,7 @@ cmd/proxy-start（组装入口）
 
 | 模块 | 单一职责 |
 | --- | --- |
-| domain | 程序身份、代理配置、启动方案和运行状态等平台无关概念 |
+| domain | 程序身份、代理配置、不可变绕过策略、启动方案和运行状态等平台无关概念 |
 | application/catalog | 解析与管理启动项，不执行程序 |
 | application/profiles | 代理配置、凭据引用和连接检测 |
 | application/strategy | 用不可变的原生适配器集合选择启动策略 |
@@ -38,8 +38,8 @@ cmd/proxy-start（组装入口）
 
 1. 重新解析原始路径或包标识，避免快捷方式目标或 MSIX 安装目录更新后继续使用旧路径。
 2. 查找对应的现有进程；普通“启动”不自动结束已有程序。
-3. 读取代理及凭据，对所需协议执行连接检测。
-4. 由策略选择器查找适配器，并检查协议与认证是否支持。
+3. 读取代理、凭据和 `BypassPolicy`，对所需协议执行连接检测。
+4. 由策略选择器查找适配器，并同时检查协议、认证和绕过策略是否支持。
 5. 原生方式生成 `LaunchSpec` 并交给平台执行；强制方式先提交显式路径规则，再启动目标程序。
 6. 记录实际 PID、创建时间和路径。进程启动成功不自动升级为“实际连接已验证”。
 
@@ -53,7 +53,20 @@ type ConsoleLauncher interface {
 }
 ```
 
-`ConsoleSpec` 只在运行时携带配置生成的环境映射和要清除的变量。HTTP、HTTPS、ALL_PROXY 以及对应小写变量都会写入同一代理 URL；HTTP / SOCKS5 的用户名和密码由 URL 编码后再组成 URL。`NO_PROXY` 与 `no_proxy` 在子 shell 中清除，父进程环境、系统代理、Clash 配置和全局路由不变。打开控制台本身只表示 shell 创建请求成功，不表示目标软件流量已经实际连通。
+`ConsoleSpec` 只在运行时携带配置生成的环境映射和要清除的变量。HTTP、HTTPS、ALL_PROXY 以及对应小写变量都会写入同一代理 URL；HTTP / SOCKS5 的用户名和密码由 URL 编码后再组成 URL。非空 `BypassPolicy` 会以逗号分隔写入 `NO_PROXY` 与 `no_proxy`，覆盖子 shell 继承的值；空策略才会清除这两个继承变量。父进程环境、系统代理、Clash 配置、VPN/TUN 和全局路由不变。规则只在下一次启动、重启或打开新控制台时读取，已有进程保持原环境。打开控制台本身只表示 shell 创建请求成功，不表示目标软件流量已经实际连通。
+
+领域层把编辑器输入收敛为不可变的值对象：
+
+```go
+type BypassPolicy struct { /* validated, private domains */ }
+
+func NewBypassPolicy([]string) (BypassPolicy, error)
+func ParseBypassPolicy(string) (BypassPolicy, error) // newline or comma separated
+func (BypassPolicy) Domains() []string               // defensive copy
+func (BypassPolicy) Empty() bool
+```
+
+每个值是规范化后的 ASCII 主机名或域名（含 Punycode），大小写归一化并去重；`example.com` 表示根域及其子域。URL、端口、通配符和 IP/CIDR 在领域层拒绝。配置保存 `BypassDomains`，旧 JSON 缺少该字段时按空策略处理。
 
 Windows 的实现以 `CREATE_NEW_CONSOLE` 启动独立 PowerShell，并只把环境交给该进程及其子进程。macOS 的实现通过 Terminal.app 执行权限为 0700 的私有 `.command` 文件；脚本先自删再导出变量并进入干净 zsh。启动器最多等待 10 秒确认脚本被读取，失败、取消或超时立即清理临时文件。该路径目前尚未在 Mac 实机运行，也未完成 Developer ID 签名或公证。
 
@@ -67,12 +80,12 @@ Windows 的实现以 `CREATE_NEW_CONSOLE` 启动独立 PowerShell，并只把环
 type NativeAdapter interface {
     ID() string
     Match(domain.AppIdentity) bool
-    Supports(domain.ProxyEndpoint) bool
-    Plan(domain.AppIdentity, domain.ProxyEndpoint) (domain.LaunchSpec, error)
+    Supports(domain.ProxyEndpoint, domain.BypassPolicy) bool
+    Plan(domain.AppIdentity, domain.ProxyEndpoint, domain.BypassPolicy) (domain.LaunchSpec, error)
 }
 ```
 
-参考 `internal/adapters/native/adapters.go` 的 Codex 实现。生产名单集中在 `native.Production()`，首期仅注册 Codex。`Match` 使用真实软件身份；`Supports` 声明支持的协议和认证边界；`Plan` 是纯函数，复制参数与环境设置，不能更改传入对象或直接启动进程。新增支持时修改该名单，不修改启动器内的条件分支。macOS bundle ID 与路径规则参考 [OpenAI 官方启动器](https://github.com/openai/codex/blob/main/codex-rs/cli/src/desktop_app/mac.rs)。
+参考 `internal/adapters/native/adapters.go` 的 Codex 实现。生产名单集中在 `native.Production()`，首期仅注册 Codex。`Match` 使用真实软件身份；`Supports` 声明支持的协议、认证和绕过策略边界；`Plan` 是纯函数，复制参数与环境设置，不能更改传入对象或直接启动进程。适配器若不支持绕过，必须在 `Supports` 中显式拒绝非空策略，不能静默忽略规则。新增支持时修改该名单，不修改启动器内的条件分支。macOS bundle ID 与路径规则参考 [OpenAI 官方启动器](https://github.com/openai/codex/blob/main/codex-rs/cli/src/desktop_app/mac.rs)。
 
 新增适配器至少测试身份误匹配、协议与认证边界、已有代理参数处理，以及输入不可变性。应用需要新的平台能力时，再扩展对应小接口，不给已有接口加入无关方法。
 
@@ -112,20 +125,21 @@ func (ExampleHTTPToolAdapter) Match(identity domain.AppIdentity) bool {
     return false
 }
 
-func (ExampleHTTPToolAdapter) Supports(proxy domain.ProxyEndpoint) bool {
+func (ExampleHTTPToolAdapter) Supports(proxy domain.ProxyEndpoint, bypass domain.BypassPolicy) bool {
     host := strings.TrimSpace(proxy.Host)
-    return proxy.Protocol == domain.ProtocolHTTP &&
+    return bypass.Empty() &&
+        proxy.Protocol == domain.ProtocolHTTP &&
         host != "" && !strings.ContainsAny(host, "/\\\r\n\t ") &&
         proxy.Port >= 1 && proxy.Port <= 65535 &&
         strings.TrimSpace(proxy.Username) == "" && strings.TrimSpace(proxy.Password) == ""
 }
 
-func (a ExampleHTTPToolAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoint) (domain.LaunchSpec, error) {
+func (a ExampleHTTPToolAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoint, bypass domain.BypassPolicy) (domain.LaunchSpec, error) {
     if !a.Match(identity) {
         return domain.LaunchSpec{}, fmt.Errorf("example adapter does not match %q", identity.Executable)
     }
-    if !a.Supports(proxy) {
-        return domain.LaunchSpec{}, fmt.Errorf("example adapter requires an unauthenticated HTTP proxy")
+    if !a.Supports(proxy, bypass) {
+        return domain.LaunchSpec{}, fmt.Errorf("example adapter requires an unauthenticated HTTP proxy and an empty bypass policy")
     }
 
     proxyURL := "http://" + proxy.Address()

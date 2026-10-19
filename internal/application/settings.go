@@ -74,6 +74,9 @@ func (r *settingsRepository) profile(id string) (domain.ProxyProfile, error) {
 
 func cloneSettings(s domain.Settings) domain.Settings {
 	s.Profiles = append([]domain.ProxyProfile(nil), s.Profiles...)
+	for i := range s.Profiles {
+		s.Profiles[i].BypassDomains = append([]string(nil), s.Profiles[i].BypassDomains...)
+	}
 	s.Apps = append([]domain.AppEntry(nil), s.Apps...)
 	for i := range s.Apps {
 		s.Apps[i].Identity.Arguments = append([]string(nil), s.Apps[i].Identity.Arguments...)

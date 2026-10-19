@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build (for example v0.1.10)
+        description: Existing version tag to build (for example v0.1.11)
         required: true
-        default: v0.1.10
+        default: v0.1.11
         type: string
 
 permissions:
@@ -149,8 +149,9 @@ jobs:
           go vet ./...
           if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
           $env:PROXY_START_CONSOLE_REAL = '1'
-          go test ./internal/platform/console -run '^TestWindowsChildEnvironmentIntegration$' -count=1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows console environment test failed' }
+          $env:PROXY_START_CONSOLE_BYPASS_REAL = '1'
+          go test ./internal/platform/console -run '^TestWindows(ChildEnvironment(Bypass)?Integration|ConsoleProxyBypassRoutingIntegration)$' -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows console environment or bypass routing test failed' }
 
       - name: Run native macOS tests
         if: matrix.platform == 'macos'
@@ -273,9 +274,19 @@ jobs:
           repo = os.environ['GITHUB_REPOSITORY']
           tag = os.environ['RELEASE_TAG']
           run = f"{os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-          notes = '\n'.join([
+          heading = f"## {tag.removeprefix('v')}"
+          changelog = Path('CHANGELOG.md').read_text(encoding='utf-8').splitlines()
+          try:
+              start = changelog.index(heading) + 1
+          except ValueError:
+              raise SystemExit(f'Missing changelog entry for {tag}')
+          end = next((i for i in range(start, len(changelog)) if changelog[i].startswith('## ')), len(changelog))
+          changes = '\n'.join(changelog[start:end]).strip()
+          if not changes:
+              raise SystemExit(f'Empty changelog entry for {tag}')
+          notes = changes + '\n\n' + '\n'.join([
               '## 验证与平台范围', '',
-              f'- Windows 代理控制台的 HTTP / SOCKS5 HTTPS 请求与失败对照已实测，见[验证记录](https://github.com/{repo}/blob/{tag}/docs/CONSOLE-VERIFICATION.md)。CI 运行子进程环境测试，真实外网测试保留为显式启用。',
+              f'- Windows 控制台环境与本地 HTTP/SOCKS5 域名分流测试在 CI 执行；历史 HTTPS 代理验证见[验证记录](https://github.com/{repo}/blob/{tag}/docs/CONSOLE-VERIFICATION.md)。真实外网测试保留为显式启用。',
               f'- Windows / macOS 原生测试、构建和版本诊断：[本次 CI]({run})。',
               '- macOS 提供 Apple Silicon / Intel 包、Codex 原生 HTTP 代理和代理终端；按程序强制代理仅支持 Windows。',
               '- macOS 未完成 Developer ID 签名或公证，GUI、Keychain、Terminal 和真实 Codex 联网仍需 Mac 实机验收。',

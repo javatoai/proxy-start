@@ -57,8 +57,8 @@ type ConsoleLauncher interface {
 type NativeAdapter interface {
 	ID() string
 	Match(domain.AppIdentity) bool
-	Supports(domain.ProxyEndpoint) bool
-	Plan(domain.AppIdentity, domain.ProxyEndpoint) (domain.LaunchSpec, error)
+	Supports(domain.ProxyEndpoint, domain.BypassPolicy) bool
+	Plan(domain.AppIdentity, domain.ProxyEndpoint, domain.BypassPolicy) (domain.LaunchSpec, error)
 }
 
 type ForcedBackend interface {

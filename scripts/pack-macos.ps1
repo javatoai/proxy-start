@@ -116,7 +116,7 @@ function Write-U32BE([byte[]]$Buffer, [int]$Offset, [int]$Value) {
 }
 
 function New-IcnsFromPngs([string[]]$PngPaths, [string]$Destination) {
-    $chunkNames = @("icp4", "icp5", "icp6")
+    $chunkNames = @("icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10")
     $chunks = @()
     for ($i = 0; $i -lt $PngPaths.Count; $i++) {
         if (-not (Test-Path -LiteralPath $PngPaths[$i] -PathType Leaf)) { continue }
@@ -350,8 +350,7 @@ try {
         Invoke-Go @("test", "./...")
     }
     $iconSource = Join-Path $projectRoot "assets/proxy-start-64.png"
-    $icon16 = Join-Path $projectRoot "assets/proxy-start-16.png"
-    $icon32 = Join-Path $projectRoot "assets/proxy-start-32.png"
+    $iconPaths = @(16, 32, 64, 128, 256, 512, 1024 | ForEach-Object { Join-Path $projectRoot "assets/proxy-start-$_.png" })
     if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) { throw "缺少图标资源：$iconSource" }
 
     $releaseChecksums = Join-Path $OutputDir "checksums.sha256"
@@ -390,7 +389,7 @@ try {
         Invoke-Go $args
         Assert-MachOExecutable $binary $arch
         Copy-Item -LiteralPath $iconSource -Destination (Join-Path $resources "proxy-start.png") -Force
-        New-IcnsFromPngs @($icon16, $icon32, $iconSource) (Join-Path $resources "proxy-start.icns")
+        New-IcnsFromPngs $iconPaths (Join-Path $resources "proxy-start.icns")
         Write-InfoPlist (Join-Path $contents "Info.plist")
         [IO.File]::WriteAllText((Join-Path $contents "PkgInfo"), "APPL????", [Text.UTF8Encoding]::new($false))
         Copy-Item -LiteralPath (Join-Path $projectRoot "docs/MACOS.md") -Destination (Join-Path $packageRoot "MACOS.md") -Force

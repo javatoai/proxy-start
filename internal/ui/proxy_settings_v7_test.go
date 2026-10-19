@@ -14,9 +14,9 @@ import (
 func TestProxySettingsListAndModal(t *testing.T) {
 	m := newModel(nil)
 	m.page = pageProxySettings
-	m.snapshot = application.Snapshot{Settings: domain.Settings{Theme: "light", DefaultProxyID: "local", Profiles: []domain.ProxyProfile{{ID: "local", Name: "本机 Clash", Protocol: domain.ProtocolAuto, Host: "127.0.0.1", Port: 7897}}}}
+	m.snapshot = application.Snapshot{Settings: domain.Settings{Theme: "light", DefaultProxyID: "local", Profiles: []domain.ProxyProfile{{ID: "local", Name: "本机 Clash", Protocol: domain.ProtocolAuto, Host: "127.0.0.1", Port: 7897, BypassDomains: []string{"api.example.com", "localhost"}}}}}
 	tester := nativeui.NewTester(m.view, 1180, 760)
-	for _, text := range []string{"代理设置", "代理列表", "打开控制台", "编辑", "删除", "默认"} {
+	for _, text := range []string{"代理设置", "代理列表", "打开控制台", "编辑", "删除", "默认", "绕过 2 个域名"} {
 		if !tester.HasText(text) {
 			t.Fatalf("proxy list missing %q: %v", text, tester.Texts())
 		}
@@ -27,7 +27,7 @@ func TestProxySettingsListAndModal(t *testing.T) {
 	if err := tester.Click("新增代理"); err != nil {
 		t.Fatal(err)
 	}
-	if !tester.HasText("保存代理配置") || !tester.HasText("地址") || !tester.HasText("协议") {
+	if !tester.HasText("保存代理配置") || !tester.HasText("地址") || !tester.HasText("协议") || !tester.HasText("绕过代理的域名") {
 		t.Fatalf("proxy editor modal missing fields: %v", tester.Texts())
 	}
 	tester.Key(0, nativeui.KeyEscape)
@@ -145,8 +145,8 @@ func TestProxySettingsV7ReviewFrames(t *testing.T) {
 		m := newModel(nil)
 		m.page = pageProxySettings
 		m.snapshot = application.Snapshot{Settings: domain.Settings{Theme: theme, DefaultProxyID: "local", Profiles: []domain.ProxyProfile{
-			{ID: "local", Name: "本机 Clash", Protocol: domain.ProtocolAuto, Host: "127.0.0.1", Port: 7897},
-			{ID: "remote", Name: "远程工作网络", Protocol: domain.ProtocolSOCKS5, Host: "proxy.example.com", Port: 1080},
+			{ID: "local", Name: "本机 Clash", Protocol: domain.ProtocolAuto, Host: "127.0.0.1", Port: 7897, BypassDomains: []string{"api.example.com", "localhost"}},
+			{ID: "remote", Name: "远程工作网络", Protocol: domain.ProtocolSOCKS5, Host: "proxy.example.com", Port: 1080, BypassDomains: []string{"intranet.example.com"}},
 		}}}
 		tester := nativeui.NewTester(m.view, 1180, 760)
 		writeNativePNG(t, filepath.Join(dir, "proxy-list-"+theme+".png"), tester.Image())
@@ -165,10 +165,35 @@ func TestProxySettingsV7ReviewFrames(t *testing.T) {
 			if err := compactTester.Click("编辑代理 本机 Clash"); err != nil {
 				t.Fatal(err)
 			}
+			if !compact.proxyModalOpen || !compactTester.HasText("保存代理配置") {
+				t.Fatalf("minimum editor did not open after edit action: modal=%v texts=%v", compact.proxyModalOpen, compactTester.Texts())
+			}
+			// The authentication toggle starts below the visible body at the
+			// minimum window size. Scroll from the visible bypass field first so
+			// the click lands inside the modal body instead of on the scrim.
+			bypassTarget, ok := compactTester.Find("绕过代理的域名")
+			if !ok {
+				t.Fatalf("minimum editor did not expose bypass field before auth: %v", compactTester.Texts())
+			}
+			compactTester.Scroll(bypassTarget.X+bypassTarget.W/2, bypassTarget.Y+bypassTarget.H/2, 0, 320)
+			if !compact.proxyModalOpen || !compactTester.HasText("展开认证（可选）") {
+				t.Fatalf("minimum editor lost modal while revealing auth: modal=%v texts=%v", compact.proxyModalOpen, compactTester.Texts())
+			}
 			if err := compactTester.Click("展开认证（可选）"); err != nil {
 				t.Fatal(err)
 			}
-			compactTester.Scroll(400, 300, 0, 320)
+			// Scroll over a control inside the modal. Scrolling at an arbitrary
+			// viewport coordinate can land on the scrim and close the dialog in
+			// the native tester, which would make this fixture render the list
+			// instead of the minimum-size editor.
+			scrollTarget, ok := compactTester.Find("收起认证（可选）")
+			if !ok {
+				t.Fatalf("minimum editor did not expose modal scroll target before scroll: %v", compactTester.Texts())
+			}
+			compactTester.Scroll(scrollTarget.X+scrollTarget.W/2, scrollTarget.Y+scrollTarget.H+16, 0, 320)
+			if !compact.proxyModalOpen || !compactTester.HasText("保存代理配置") {
+				t.Fatalf("minimum editor closed or lost save action after scroll: modal=%v texts=%v", compact.proxyModalOpen, compactTester.Texts())
+			}
 			writeNativePNG(t, filepath.Join(dir, "proxy-editor-light-minimum-auth.png"), compactTester.Image())
 		}
 	}

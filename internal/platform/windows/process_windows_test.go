@@ -6,11 +6,26 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"proxy-start/internal/domain"
 )
+
+func TestPackagedLaunchEnvironmentAppliesBypassAfterUnset(t *testing.T) {
+	unsetIndex := strings.Index(packagedOuterScript, "foreach ($name in @($config.unsetEnvironment))")
+	environmentIndex := strings.Index(packagedOuterScript, "foreach ($property in $config.environment.PSObject.Properties)")
+	if unsetIndex < 0 || environmentIndex < 0 {
+		t.Fatal("packaged launch script does not pass environment and unset settings")
+	}
+	if unsetIndex > environmentIndex {
+		t.Fatal("packaged launch script removes bypass variables after applying configured environment")
+	}
+	if strings.Contains(packagedOuterScript, "Remove('NO_PROXY'") || strings.Contains(packagedOuterScript, "Remove(\"NO_PROXY\"") {
+		t.Fatal("packaged launch script contains a hard-coded NO_PROXY removal")
+	}
+}
 
 // Run with PROXY_START_WINDOWS_INTEGRATION=1 on a disposable Windows host.
 // The child is a temporary PowerShell helper and is always terminated by the

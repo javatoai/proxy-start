@@ -7,12 +7,37 @@ import (
 	"errors"
 	"os"
 	"proxy-start/internal/application"
+	"strings"
 	"testing"
 	"time"
 )
 
 func applicationSpecForTest() application.ConsoleSpec {
 	return application.ConsoleSpec{ProfileName: "fixture", Environment: map[string]string{"HTTP_PROXY": "http://user:fixture-password@example.test:8080"}, UnsetEnvironment: []string{"NO_PROXY", "no_proxy"}}
+}
+
+func TestDarwinCommandScriptCarriesBypassEnvironment(t *testing.T) {
+	spec := application.ConsoleSpec{
+		ProfileName: "fixture",
+		Environment: map[string]string{
+			"HTTP_PROXY": "http://127.0.0.1:7897",
+			"NO_PROXY":   "example.com,api.example",
+			"no_proxy":   "example.com,api.example",
+		},
+	}
+	script := commandScript(spec)
+	for _, expected := range []string{
+		"export 'NO_PROXY'='example.com,api.example'",
+		"export 'no_proxy'='example.com,api.example'",
+		"export 'HTTP_PROXY'='http://127.0.0.1:7897'",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("Terminal script missing %q: %s", expected, script)
+		}
+	}
+	if strings.Contains(script, "unset 'NO_PROXY'") || strings.Contains(script, "unset 'no_proxy'") {
+		t.Fatal("non-empty bypass script unexpectedly unsets bypass variables")
+	}
 }
 
 func TestDarwinLauncherCleansScriptWhenTerminalFails(t *testing.T) {

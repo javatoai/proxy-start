@@ -29,19 +29,20 @@ func (CodexAdapter) Match(identity domain.AppIdentity) bool {
 	return hasCodexPackage(identity)
 }
 
-// Supports accepts an automatically detected profile as HTTP.  Clash's mixed
+// Supports accepts an automatically detected profile as HTTP. Clash's mixed
 // port is exposed to applications as an HTTP CONNECT endpoint by the native
 // launcher; SOCKS5 (and all authenticated profiles) remain unsupported until
-// the packaged child-process stack is verified.
-func (a CodexAdapter) Supports(proxy domain.ProxyEndpoint) bool {
+// the packaged child-process stack is verified. Bypass rules are supported by
+// Chromium's command-line switch and the matching child environment.
+func (a CodexAdapter) Supports(proxy domain.ProxyEndpoint, _ domain.BypassPolicy) bool {
 	return validEndpoint(proxy) && effectiveProtocol(proxy.Protocol) == domain.ProtocolHTTP && noCredentials(proxy)
 }
 
-func (a CodexAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoint) (domain.LaunchSpec, error) {
+func (a CodexAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoint, bypass domain.BypassPolicy) (domain.LaunchSpec, error) {
 	if !a.Match(identity) {
 		return domain.LaunchSpec{}, fmt.Errorf("native Codex adapter does not match %q", identity.Executable)
 	}
-	if !a.Supports(proxy) {
+	if !a.Supports(proxy, bypass) {
 		return domain.LaunchSpec{}, fmt.Errorf("native Codex supports only unauthenticated HTTP proxies")
 	}
 
@@ -50,11 +51,16 @@ func (a CodexAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoi
 	// this package never invokes PowerShell or an AppX API.
 	identityCopy := cloneIdentity(identity)
 	args := withProxyServer(identity.Arguments, proxyURL(proxy))
+	args = withProxyBypassList(args, bypass)
+	environment, unsetEnvironment, err := application.BuildProxyEnvironment(proxy, effectiveProtocol(proxy.Protocol), bypass)
+	if err != nil {
+		return domain.LaunchSpec{}, err
+	}
 	return domain.LaunchSpec{
 		Identity:         identityCopy,
 		Arguments:        args,
-		Environment:      proxyEnvironment(proxy),
-		UnsetEnvironment: []string{"NO_PROXY", "no_proxy"},
+		Environment:      environment,
+		UnsetEnvironment: unsetEnvironment,
 	}, nil
 }
 
@@ -144,18 +150,6 @@ func proxyURL(proxy domain.ProxyEndpoint) string {
 	return string(effectiveProtocol(proxy.Protocol)) + "://" + proxy.Address()
 }
 
-func proxyEnvironment(proxy domain.ProxyEndpoint) map[string]string {
-	value := proxyURL(proxy)
-	return map[string]string{
-		"HTTP_PROXY":  value,
-		"HTTPS_PROXY": value,
-		"ALL_PROXY":   value,
-		"http_proxy":  value,
-		"https_proxy": value,
-		"all_proxy":   value,
-	}
-}
-
 func cloneIdentity(identity domain.AppIdentity) domain.AppIdentity {
 	identity.Arguments = append([]string(nil), identity.Arguments...)
 	return identity
@@ -183,6 +177,21 @@ func withProxyServer(arguments []string, proxy string) []string {
 		}
 	}
 	return append(clean, "--proxy-server="+proxy)
+}
+
+// withProxyBypassList appends one canonical Chromium bypass switch to an
+// argument list that has already been cleaned by withProxyServer. Chromium
+// uses a semicolon separated list; each domain is expanded with a wildcard so
+// the root and all of its subdomains bypass the selected proxy.
+func withProxyBypassList(arguments []string, bypass domain.BypassPolicy) []string {
+	if bypass.Empty() {
+		return arguments
+	}
+	parts := make([]string, 0, len(bypass.Domains())*2)
+	for _, domainName := range bypass.Domains() {
+		parts = append(parts, domainName, "*."+domainName)
+	}
+	return append(arguments, "--proxy-bypass-list="+strings.Join(parts, ";"))
 }
 
 func isProxyFlagWithValue(flag string) bool {

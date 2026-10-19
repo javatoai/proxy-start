@@ -1,6 +1,14 @@
 # 验证记录
 
-验证环境：2026-10-18，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.10（Windows `release-0.1.10`，macOS `release-0.1.10-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
+验证环境：2026-10-19，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.11（Windows `release-0.1.11`，macOS `release-0.1.11-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
+
+## 2026-10-19 0.1.11 域名绕过与品牌图标验证
+
+本节记录 0.1.11 新增的域名绕过实现。Windows `TestWindowsConsoleProxyBypassRoutingIntegration` 使用 `PROXY_START_CONSOLE_BYPASS_REAL=1` 执行，单次和 `-count=3` 均通过：根域和子域直连，未匹配域名到本地记录 HTTP 代理；代理关闭后未匹配请求退出码 `7`、HTTP 状态 `000`。测试目标服务器累计记录 `direct=5`（包含一次由 SOCKS5 代理转发的请求，该计数不全是客户端直连）、记录代理目标 `http://through.test:<临时端口>/proxy`，以及 SOCKS5 未绕过请求 `CONNECT through.test:<临时端口>`、退出码 `0`、HTTP `200`。测试只使用本地测试服务，不连接外网或 `127.0.0.1:7897`，curl 未使用 `--proxy` / `--noproxy`，`--resolve` 只用于测试域名映射。
+
+真实子进程环境用例 `TestWindowsChildEnvironmentIntegration` 与 `TestWindowsChildEnvironmentBypassIntegration` 均通过，覆盖非空 `NO_PROXY` / `no_proxy` 覆盖和空规则清理继承值。AppX/Codex 参数静态检查及 Darwin 环境变量、临时脚本和参数测试已交叉编译验证。真实 Codex 网络请求、Mac 实机 GUI / Terminal、签名与公证仍未验收。
+
+本机以 `PROXY_START_CONSOLE_REAL=1` 和 `PROXY_START_CONSOLE_BYPASS_REAL=1` 执行 `go test ./... -count=1`，全部通过；`go vet ./...` 通过。macOS arm64、amd64 全部内部测试包及命令包交叉编译通过。Windows 预览构建位于 `dist/bypass-preview`，使用含绕过域名的临时配置运行 `--check` 成功；用户现有配置文件的 SHA-256 在验证前后相同。品牌图标以 `assets/proxy-start.svg` 为唯一源，已检查 16/32/64/128/256/512/1024px PNG、Windows ICO 及打包脚本生成的 macOS ICNS 派生路径。
 
 ## 自动化验证
 
@@ -9,6 +17,7 @@
 | 原生适配器与策略 | Codex / Chrome / Edge 身份匹配、HTTP / SOCKS5 与认证能力边界、旧代理参数替换、混合端口优先选择已验证协议、强制代理回退 |
 | 应用用例 | 默认与单独代理、已有进程发现、重复启动、重新解析更新后的程序身份、启动失败回滚、关联进程存活、共享会话不互相覆盖、退出不结束目标程序 |
 | 配置与凭据 | 配置原子保存、损坏配置保留、快照隔离；Windows 凭据管理器独立条目的写入 / 读取 / 删除 |
+| 域名绕过策略 | `BypassPolicy` 规范化、去重、旧配置兼容、Codex 参数清理与根域 / 子域展开、控制台 `NO_PROXY` 覆盖及空值清理；Windows 工作区路由验证见下文 |
 | 代理检测 | HTTP CONNECT、SOCKS5 CONNECT、认证失败、只完成握手而未连通的区分、取消与超时 |
 | HTTP 桥接 | CONNECT 转发、认证、缓冲数据保留、失败不直连、UDP 拒绝、并发启动 / 关闭、长连接清除握手超时 |
 | 强制后端 | 仅完整路径规则、路径冲突拒绝、共享桥接复用、失败保持已有配置、取消不结束活动桥接、退出后再次使用 |
@@ -57,7 +66,7 @@ $env:PROXY_START_WINDOWS_DIAGNOSTIC = '1'
 
 ## 交付
 
-源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.10/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。
+源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.11/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。品牌图标以 `assets/proxy-start.svg` 为唯一源，32px 窗口 / 托盘图像、PE/ICO、ICNS 和 1024px 预览均由它派生。
 
 ## 0.1.10 发布草稿与跨平台校验
 
@@ -85,7 +94,7 @@ Release 说明使用 Python 写入字面 Markdown，避免 shell 对反引号执
 
 本轮文档与设计契约已按 0.1.7 规格同步：侧栏为“应用 / 代理设置 / 系统设置”；代理设置为名称、地址、协议、默认标记、操作表格，支持打开控制台、编辑、删除及新增 / 编辑模态；系统设置为单列最大 760px 的外观、应用列表和强制代理组件区域；底部 37px 反馈空间移除，操作反馈改为右上悬浮提示，成功约 4 秒消失，错误可关闭且不自动消失，进行中持续显示。`docs/BUILD.md` 的预览页包含 `proxy-settings`、`system-settings`，并保留 `settings` 旧别名。
 
-代理控制台用例由独立的 `application.ConsoleLauncher` 接口和 `Desktop.OpenProxyConsole` 门面描述：Windows 使用独立 PowerShell，macOS 使用 Terminal 私有临时脚本；HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 及小写变量只作用于新 shell 与子进程，NO_PROXY / no_proxy 被清除，认证 URL 会编码，自动检测优先 HTTP。只有读取这些环境变量的工具会受影响；Windows 诊断入口为 `--open-proxy-console`，测试命令应使用 `curl.exe` 而非 Windows PowerShell 的 `curl` 别名。打开控制台不作为实际目标流量已连通的证明；Mac 实机运行、签名和公证均未确认。
+代理控制台用例由独立的 `application.ConsoleLauncher` 接口和 `Desktop.OpenProxyConsole` 门面描述：Windows 使用独立 PowerShell，macOS 使用 Terminal 私有临时脚本；HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 及小写变量只作用于新 shell 与子进程，非空绕过规则覆盖 `NO_PROXY` / `no_proxy`，空规则才清除继承值，认证 URL 会编码，自动检测优先 HTTP。只有读取这些环境变量的工具会受影响；Windows 诊断入口为 `--open-proxy-console`，测试命令应使用 `curl.exe` 而非 Windows PowerShell 的 `curl` 别名。打开控制台不作为实际目标流量已连通的证明；Mac 实机运行、签名和公证均未确认。
 
 ### 本轮验收记录
 

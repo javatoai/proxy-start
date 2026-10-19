@@ -537,8 +537,8 @@ try {
   $startInfo.Arguments = [string]$config.arguments
   $startInfo.UseShellExecute = $false
   $startInfo.WorkingDirectory = [string]$config.workingDirectory
-  foreach ($property in $config.environment.PSObject.Properties) { $startInfo.EnvironmentVariables[$property.Name] = [string]$property.Value }
   foreach ($name in @($config.unsetEnvironment)) { if ($name) { $startInfo.EnvironmentVariables.Remove([string]$name) } }
+  foreach ($property in $config.environment.PSObject.Properties) { $startInfo.EnvironmentVariables[$property.Name] = [string]$property.Value }
   $process = [Diagnostics.Process]::Start($startInfo)
   $result = @{ processId = $process.Id }
 } catch { $result = @{ error = $_.Exception.Message } }

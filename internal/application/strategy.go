@@ -13,7 +13,7 @@ func NewStrategySelector(adapters ...NativeAdapter) *StrategySelector {
 	return &StrategySelector{adapters: append([]NativeAdapter(nil), adapters...)}
 }
 
-func (s *StrategySelector) Select(identity domain.AppIdentity, endpoint domain.ProxyEndpoint, cap domain.ProbeResult) (domain.LaunchPlan, error) {
+func (s *StrategySelector) Select(identity domain.AppIdentity, endpoint domain.ProxyEndpoint, cap domain.ProbeResult, bypass domain.BypassPolicy) (domain.LaunchPlan, error) {
 	candidates := make([]domain.ProxyEndpoint, 0, 2)
 	if cap.HTTPVerified && endpoint.Protocol != domain.ProtocolSOCKS5 {
 		p := endpoint
@@ -35,14 +35,17 @@ func (s *StrategySelector) Select(identity domain.AppIdentity, endpoint domain.P
 		}
 		reason = "原生适配器不支持当前代理配置，改用强制代理"
 		for _, candidate := range candidates {
-			if adapter.Supports(candidate) {
-				spec, err := adapter.Plan(identity, candidate)
+			if adapter.Supports(candidate, bypass) {
+				spec, err := adapter.Plan(identity, candidate, bypass)
 				if err != nil {
 					return domain.LaunchPlan{}, err
 				}
 				return domain.LaunchPlan{Mode: domain.ModeNative, AdapterID: adapter.ID(), Reason: "已应用原生代理启动设置；实际连接尚未验证", Spec: spec, Proxy: candidate}, nil
 			}
 		}
+	}
+	if !bypass.Empty() {
+		return domain.LaunchPlan{}, ErrUnsupportedBypass
 	}
 	// Prefer SOCKS5 for interception when a mixed port offers both protocols.
 	proxy := candidates[len(candidates)-1]

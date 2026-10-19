@@ -158,7 +158,15 @@ func (m *model) installBackend() {
 }
 
 func (m *model) loadProfileDraft(profile domain.ProxyProfile) {
-	m.profileDraft = profileDraft{id: profile.ID, name: profile.Name, protocol: string(profile.Protocol), host: profile.Host, port: strconv.Itoa(profile.Port), username: profile.Username}
+	m.profileDraft = profileDraft{
+		id:            profile.ID,
+		name:          profile.Name,
+		protocol:      string(profile.Protocol),
+		host:          profile.Host,
+		port:          strconv.Itoa(profile.Port),
+		username:      profile.Username,
+		bypassDomains: strings.Join(profile.BypassDomains, "\n"),
+	}
 	m.profileNew = false
 }
 
@@ -191,7 +199,24 @@ func (m *model) saveProfile() {
 		m.setStatus("端口必须是数字", noticeError)
 		return
 	}
-	profile := domain.ProxyProfile{ID: m.profileDraft.id, Name: strings.TrimSpace(m.profileDraft.name), Protocol: domain.Protocol(m.profileDraft.protocol), Host: strings.TrimSpace(m.profileDraft.host), Port: port, Username: strings.TrimSpace(m.profileDraft.username)}
+	bypass, err := domain.ParseBypassPolicy(m.profileDraft.bypassDomains)
+	if err != nil {
+		m.profileDraft.bypassError = err.Error()
+		if m.win != nil {
+			m.win.Invalidate()
+		}
+		return
+	}
+	m.profileDraft.bypassError = ""
+	profile := domain.ProxyProfile{
+		ID:            m.profileDraft.id,
+		Name:          strings.TrimSpace(m.profileDraft.name),
+		Protocol:      domain.Protocol(m.profileDraft.protocol),
+		Host:          strings.TrimSpace(m.profileDraft.host),
+		Port:          port,
+		Username:      strings.TrimSpace(m.profileDraft.username),
+		BypassDomains: bypass.Domains(),
+	}
 	password := m.profileDraft.password
 	isNew := m.profileNew
 	editToken := m.profileEditToken
@@ -297,6 +322,16 @@ func (m *model) run(key, pending string, fn func(context.Context) error) {
 	m.runAfter(key, pending, fn, nil)
 }
 
+func (m *model) enqueueUpdate(update func()) {
+	if m.postUpdate != nil {
+		m.postUpdate(update)
+		return
+	}
+	if m.win != nil {
+		m.win.Update(update)
+	}
+}
+
 func (m *model) runAfter(key, pending string, fn func(context.Context) error, onSuccess func()) {
 	if m.busy[key] {
 		return
@@ -310,7 +345,7 @@ func (m *model) runAfter(key, pending string, fn func(context.Context) error, on
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		err := fn(ctx)
 		cancel()
-		m.win.Update(func() {
+		update := func() {
 			delete(m.busy, key)
 			if err != nil {
 				m.setStatus("操作失败："+err.Error(), noticeError)
@@ -321,6 +356,7 @@ func (m *model) runAfter(key, pending string, fn func(context.Context) error, on
 				onSuccess()
 			}
 			m.setStatus(completedMessage(key), noticeSuccess)
-		})
+		}
+		m.enqueueUpdate(update)
 	}()
 }

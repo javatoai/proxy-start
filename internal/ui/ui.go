@@ -27,6 +27,10 @@ type model struct {
 	tray     *mygo.Tray
 	options  Options
 	autoQuit *time.Timer
+	// postUpdate is a test seam for the UI dispatcher. Production uses the
+	// native window's Update method; tests can enqueue the callback and apply
+	// it on their own UI thread.
+	postUpdate func(func())
 
 	refresh  chan struct{}
 	page     int
@@ -81,6 +85,11 @@ type profileDraft struct {
 	port     string
 	username string
 	password string
+	// bypassDomains keeps the editor's user-friendly multiline representation.
+	// It is parsed and normalized into domain.ProxyProfile.BypassDomains only
+	// when the user saves the profile.
+	bypassDomains string
+	bypassError   string
 }
 
 func newModel(desktop *application.Desktop) *model {

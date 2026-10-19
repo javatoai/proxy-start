@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"net/url"
 	"proxy-start/internal/domain"
+	"strings"
 )
 
 // BuildProxyEnvironment creates proxy variables for a child shell. It is
 // intentionally pure so platform launchers can be tested without opening a
-// terminal. The returned unset list removes inherited bypass settings only in
-// the child shell.
-func BuildProxyEnvironment(endpoint domain.ProxyEndpoint, protocol domain.Protocol) (map[string]string, []string, error) {
+// terminal. Empty policies clear inherited bypass settings in the child shell;
+// non-empty policies replace them with the validated domain list.
+func BuildProxyEnvironment(endpoint domain.ProxyEndpoint, protocol domain.Protocol, bypass domain.BypassPolicy) (map[string]string, []string, error) {
 	if protocol != domain.ProtocolHTTP && protocol != domain.ProtocolSOCKS5 {
 		return nil, nil, fmt.Errorf("控制台需要明确的 HTTP 或 SOCKS5 协议")
 	}
@@ -31,5 +32,14 @@ func BuildProxyEnvironment(endpoint domain.ProxyEndpoint, protocol domain.Protoc
 		"https_proxy": value,
 		"all_proxy":   value,
 	}
-	return environment, []string{"NO_PROXY", "no_proxy"}, nil
+	if bypass.Empty() {
+		return environment, []string{"NO_PROXY", "no_proxy"}, nil
+	}
+	// Keep the bypass value in both casing variants. The child launcher removes
+	// inherited values only when the policy is empty, so these explicit values
+	// survive on Windows and Unix shells alike.
+	bypassValue := strings.Join(bypass.Domains(), ",")
+	environment["NO_PROXY"] = bypassValue
+	environment["no_proxy"] = bypassValue
+	return environment, nil, nil
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	nativeui "github.com/egoist/mygo/ui"
+	"proxy-start/internal/domain"
 )
 
 const proxyTableMaxWidth float32 = 1060
@@ -68,7 +69,10 @@ func (m *model) proxyTable(c *nativeui.Context) {
 						nativeui.Badge(c, "默认")
 					}
 				})
-				nativeui.Text(c, profile.Address()).Grow(1).MinWidth(150).FontSize(13).TextColor(t.TextMuted).SingleLine().Tooltip(profile.Address())
+				nativeui.Column(c).Grow(1).MinWidth(150).Gap(3).Children(func() {
+					nativeui.Text(c, profile.Address()).FontSize(13).TextColor(t.TextMuted).SingleLine().Tooltip(profile.Address())
+					nativeui.Text(c, bypassProfileSummary(profile)).FontSize(12).TextColor(t.TextMuted).SingleLine().Tooltip(bypassProfileSummary(profile))
+				})
 				nativeui.Text(c, protocolLabel(profile.Protocol)).Width(100).FontSize(13).TextColor(t.TextMuted).SingleLine()
 				nativeui.Row(c).Width(270).Gap(6).AlignItems(nativeui.Center).Children(func() {
 					console := nativeui.PrimaryButton(c, "打开控制台").Height(34).Padding(0, 11).Label("打开代理控制台").Disabled(m.busy["profile-console:"+profile.ID])
@@ -107,7 +111,10 @@ func (m *model) compactProxyTable(c *nativeui.Context) {
 					}
 				})
 				nativeui.Row(c).FillWidth().Gap(8).AlignItems(nativeui.Center).Children(func() {
-					nativeui.Text(c, profile.Address()).FontSize(13).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(profile.Address())
+					nativeui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+						nativeui.Text(c, profile.Address()).FontSize(13).TextColor(t.TextMuted).SingleLine().Tooltip(profile.Address())
+						nativeui.Text(c, bypassProfileSummary(profile)).FontSize(12).TextColor(t.TextMuted).SingleLine().Tooltip(bypassProfileSummary(profile))
+					})
 					nativeui.Text(c, protocolLabel(profile.Protocol)).FontSize(12).TextColor(t.TextMuted).SingleLine()
 				})
 				nativeui.Row(c).FillWidth().Gap(6).AlignItems(nativeui.Center).Children(func() {
@@ -128,4 +135,8 @@ func (m *model) compactProxyTable(c *nativeui.Context) {
 			}
 		}
 	})
+}
+
+func bypassProfileSummary(profile domain.ProxyProfile) string {
+	return fmt.Sprintf("绕过 %d 个域名", len(profile.BypassDomains))
 }

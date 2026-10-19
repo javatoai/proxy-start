@@ -32,8 +32,17 @@ func cloneStringMap(input map[string]string) map[string]string {
 	return result
 }
 
+func emptyBypassPolicy(t *testing.T) domain.BypassPolicy {
+	t.Helper()
+	policy, err := domain.NewBypassPolicy(nil)
+	if err != nil {
+		t.Fatalf("empty bypass policy: %v", err)
+	}
+	return policy
+}
+
 func TestBuildProxyEnvironmentEscapesCredentialsAndIPv6(t *testing.T) {
-	env, unset, err := BuildProxyEnvironment(domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "2001:db8::7", Port: 8080, Username: "alice@example.com", Password: "p@ss:word"}, domain.ProtocolHTTP)
+	env, unset, err := BuildProxyEnvironment(domain.ProxyEndpoint{Protocol: domain.ProtocolHTTP, Host: "2001:db8::7", Port: 8080, Username: "alice@example.com", Password: "p@ss:word"}, domain.ProtocolHTTP, emptyBypassPolicy(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,12 +56,30 @@ func TestBuildProxyEnvironmentEscapesCredentialsAndIPv6(t *testing.T) {
 }
 
 func TestBuildProxyEnvironmentUsesSocks5hForRemoteDNS(t *testing.T) {
-	env, _, err := BuildProxyEnvironment(domain.ProxyEndpoint{Host: "proxy.example", Port: 1080}, domain.ProtocolSOCKS5)
+	env, _, err := BuildProxyEnvironment(domain.ProxyEndpoint{Host: "proxy.example", Port: 1080}, domain.ProtocolSOCKS5, emptyBypassPolicy(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if env["ALL_PROXY"] != "socks5h://proxy.example:1080" || env["http_proxy"] != env["ALL_PROXY"] {
 		t.Fatalf("SOCKS5 environment was not shared across proxy variables: %#v", env)
+	}
+}
+
+func TestBuildProxyEnvironmentInjectsBypassWithoutUnsettingIt(t *testing.T) {
+	policy, err := domain.NewBypassPolicy([]string{"Example.com", "api.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, unset, err := BuildProxyEnvironment(domain.ProxyEndpoint{Host: "proxy.example", Port: 1080}, domain.ProtocolHTTP, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join(policy.Domains(), ",")
+	if env["NO_PROXY"] != want || env["no_proxy"] != env["NO_PROXY"] {
+		t.Fatalf("unexpected bypass environment: %#v", env)
+	}
+	if len(unset) != 0 {
+		t.Fatalf("bypass variables were unexpectedly unset: %#v", unset)
 	}
 }
 

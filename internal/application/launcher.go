@@ -82,25 +82,67 @@ func (s *launchService) start(ctx context.Context, id string) error {
 	})
 }
 
-func (s *launchService) startLocked(ctx context.Context, id string) (err error) {
+type launchTarget struct {
+	entry    domain.AppEntry
+	identity domain.AppIdentity
+	related  []string
+}
+
+func (s *launchService) resolveTarget(ctx context.Context, id string) (launchTarget, error) {
+	entry, err := s.repository.app(id)
+	if err != nil {
+		return launchTarget{}, err
+	}
+	identity := entry.Identity
+	if entry.Source != "" {
+		identity, err = s.resolver.Resolve(ctx, entry.Source)
+		if err != nil {
+			return launchTarget{}, err
+		}
+	}
+	return launchTarget{entry: entry, identity: identity, related: cleanRelatedExecutables(entry.RelatedExecutables)}, nil
+}
+
+func (s *launchService) preparePlan(ctx context.Context, target launchTarget) (domain.LaunchPlan, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.LaunchPlan{}, err
+	}
+	profile, err := s.repository.profile(target.entry.ProxyID)
+	if err != nil {
+		return domain.LaunchPlan{}, err
+	}
+	resolved, err := s.profiles.resolve(ctx, profile)
+	if err != nil {
+		return domain.LaunchPlan{}, err
+	}
+	cap, err := s.profiles.probe.Test(ctx, resolved.Endpoint)
+	if err != nil {
+		return domain.LaunchPlan{}, fmt.Errorf("代理检测失败：%w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return domain.LaunchPlan{}, err
+	}
+	return s.selector.Select(target.identity, resolved.Endpoint, cap, resolved.Bypass)
+}
+
+func (s *launchService) startLocked(ctx context.Context, id string) error {
+	target, err := s.resolveTarget(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.startTargetLocked(ctx, target, nil)
+}
+
+// A restart supplies its prepared plan, so capability validation and the
+// effective configuration cannot change between stopping and starting.
+func (s *launchService) startTargetLocked(ctx context.Context, target launchTarget, prepared *domain.LaunchPlan) (err error) {
 	s.mu.RLock()
 	closed := s.closed
 	s.mu.RUnlock()
 	if closed {
 		return ErrClosed
 	}
-	entry, err := s.repository.app(id)
-	if err != nil {
-		return err
-	}
-	identity := entry.Identity
-	if entry.Source != "" {
-		identity, err = s.resolver.Resolve(ctx, entry.Source)
-		if err != nil {
-			return err
-		}
-	}
-	related := cleanRelatedExecutables(entry.RelatedExecutables)
+	id, identity, related := target.entry.ID, target.identity, target.related
 	existing, err := s.findProcesses(ctx, identity, related)
 	if err != nil {
 		return err
@@ -132,21 +174,14 @@ func (s *launchService) startLocked(ctx context.Context, id string) (err error) 
 			s.set(failureState)
 		}
 	}()
-	profile, err := s.repository.profile(entry.ProxyID)
-	if err != nil {
-		return err
-	}
-	endpoint, err := s.profiles.endpoint(ctx, profile)
-	if err != nil {
-		return err
-	}
-	cap, err := s.profiles.probe.Test(ctx, endpoint)
-	if err != nil {
-		return fmt.Errorf("代理检测失败：%w", err)
-	}
-	plan, err := s.selector.Select(identity, endpoint, cap)
-	if err != nil {
-		return err
+	var plan domain.LaunchPlan
+	if prepared != nil {
+		plan = *prepared
+	} else {
+		plan, err = s.preparePlan(ctx, target)
+		if err != nil {
+			return err
+		}
 	}
 	failureState.Mode = plan.Mode
 	failureState.AdapterID = plan.AdapterID
@@ -260,10 +295,18 @@ func (s *launchService) restart(ctx context.Context, id string) error {
 		lock := s.appLock(id)
 		lock.Lock()
 		defer lock.Unlock()
+		target, err := s.resolveTarget(ctx, id)
+		if err != nil {
+			return err
+		}
+		plan, err := s.preparePlan(ctx, target)
+		if err != nil {
+			return err
+		}
 		if err := s.stopLocked(ctx, id); err != nil {
 			return err
 		}
-		return s.startLocked(ctx, id)
+		return s.startTargetLocked(ctx, target, &plan)
 	})
 }
 

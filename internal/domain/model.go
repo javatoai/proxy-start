@@ -25,6 +25,7 @@ type ProxyProfile struct {
 	Port          int      `json:"port"`
 	Username      string   `json:"username,omitempty"`
 	CredentialRef string   `json:"credentialRef,omitempty"`
+	BypassDomains []string `json:"bypassDomains,omitempty"`
 }
 
 func (p ProxyProfile) Validate() error {
@@ -40,7 +41,8 @@ func (p ProxyProfile) Validate() error {
 	if p.Protocol != ProtocolAuto && p.Protocol != ProtocolHTTP && p.Protocol != ProtocolSOCKS5 {
 		return fmt.Errorf("不支持的代理协议")
 	}
-	return nil
+	_, err := NewBypassPolicy(p.BypassDomains)
+	return err
 }
 
 func (p ProxyProfile) Address() string {

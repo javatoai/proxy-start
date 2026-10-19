@@ -221,6 +221,10 @@ func TestProbeDetailStaysCollapsedUntilRequested(t *testing.T) {
 	if tester.HasText("HTTP: CONNECT 已验证") {
 		t.Fatalf("raw probe detail should start collapsed: %v", tester.Texts())
 	}
+	// The bypass-domain editor adds a multiline field to the modal, so the
+	// probe card may sit below the first viewport at the compact test height.
+	// Scroll the modal body before exercising its disclosure action.
+	tester.Scroll(540, 500, 0, 320)
 	if err := tester.Click("查看详情"); err != nil {
 		t.Fatal(err)
 	}

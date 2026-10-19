@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-18T19:51:31+08:00",
+  "generatedAt": "2026-10-19T11:31:28+08:00",
   "title": "Design System: Proxy Start Native Application Manager",
   "extensions": {
     "colorMeta": {
@@ -108,8 +108,8 @@
       "name": "Product Mark",
       "kind": "custom",
       "refersTo": "brand-mark",
-      "description": "The shared geometric mark used in the sidebar lockup, window icon, tray icon, and shortcut asset.",
-      "html": "<span class=\"ds-brand-mark\" aria-label=\"Proxy Start\"><svg viewBox=\"0 0 64 64\" aria-hidden=\"true\"><rect x=\"2\" y=\"2\" width=\"60\" height=\"60\" rx=\"15\" fill=\"#2563EB\"></rect><path d=\"M17 24h30M38 17l9 7-9 7M47 40H17M26 33l-9 7 9 7\" fill=\"none\" stroke=\"#fff\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"></path><circle cx=\"16\" cy=\"32\" r=\"5\" fill=\"#2563EB\" stroke=\"#fff\" stroke-width=\"3\"></circle><circle cx=\"48\" cy=\"32\" r=\"5\" fill=\"#2563EB\" stroke=\"#fff\" stroke-width=\"3\"></circle></svg></span>",
+      "description": "The single source-of-truth mark is assets/proxy-start.svg: a 64x64 viewBox with a 60x60 #2563EB tile at (2,2), rx=16, a solid white geometric P, and a #2563EB triangular play cutout M27 18.5L44 28L27 37.5Z with a 1.2px round join. The enlarged cutout is the resolved 16px legibility fix from the finish review. That review found the remaining checks clear and assigned this mark a ship disposition; the verdict applies only to this brand asset. The same source feeds the embedded UI SVG and native raster/icon derivatives; it does not imply proxy connectivity.",
+      "html": "<span class=\"ds-brand-mark\" aria-label=\"Proxy Start\"><svg viewBox=\"0 0 64 64\" aria-hidden=\"true\"><rect x=\"2\" y=\"2\" width=\"60\" height=\"60\" rx=\"16\" fill=\"#2563EB\"></rect><path d=\"M18 48V18a4 4 0 0 1 4-4h12c10 0 16 5.6 16 14s-6 14-16 14h-6v6a4 4 0 0 1-4 4h-2a4 4 0 0 1-4-4Z\" fill=\"#FFFFFF\"></path><path d=\"M27 18.5L44 28L27 37.5Z\" fill=\"#2563EB\" stroke=\"#2563EB\" stroke-width=\"1.2\" stroke-linejoin=\"round\"></path></svg></span>",
       "css": ".ds-brand-mark { display: inline-grid; width: 32px; height: 32px; } .ds-brand-mark svg { width: 32px; height: 32px; display: block; }"
     },
     {

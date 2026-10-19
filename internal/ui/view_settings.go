@@ -51,6 +51,23 @@ func (m *model) profileEditorFields(c *nativeui.Context) {
 					nativeui.TextInput(c.Key("profile-port"), &m.profileDraft.port).FillWidth().Height(36).Label("端口").Placeholder("7897")
 				})
 			})
+			nativeui.Column(c).Gap(6).Children(func() {
+				nativeui.Text(c, "绕过代理的域名").FontSize(13).FontWeight(600)
+				nativeui.TextArea(c.Key("profile-bypass"), &m.profileDraft.bypassDomains).
+					FillWidth().Height(88).
+					Label("绕过代理的域名").
+					Placeholder("例如：api.example.com\nlocalhost").
+					Lines(3, 5).
+					OnChange(func() { m.profileDraft.bypassError = "" })
+				nativeui.Box(c).FillWidth().Children(func() {
+					if m.profileDraft.bypassError != "" {
+						nativeui.Text(c, m.profileDraft.bypassError).FontSize(12).TextColor(t.Danger).Wrap()
+					} else {
+						nativeui.Text(c, "支持换行或逗号分隔；根域名会同时绕过其子域名。不支持 URL、端口、通配符或 IP。").FontSize(12).TextColor(t.TextMuted).Wrap()
+					}
+					nativeui.Text(c, "下次启动、重启或新控制台时生效；已运行的程序保持当前配置。强制代理模式暂不支持按域名绕过，直连仍遵循 VPN/TUN 路由。").FontSize(12).TextColor(t.TextMuted).Wrap()
+				})
+			})
 		})
 		authKey := "profile-auth-" + m.profileID
 		authExpanded := m.profileAuthExpanded()

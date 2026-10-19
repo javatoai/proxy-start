@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>Proxy Start</title>
+  <desc>A geometric P with a forward play cutout, representing a chosen route and a new start.</desc>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="#2563EB"/>
+  <path d="M18 48V18a4 4 0 0 1 4-4h12c10 0 16 5.6 16 14s-6 14-16 14h-6v6a4 4 0 0 1-4 4h-2a4 4 0 0 1-4-4Z" fill="#FFFFFF"/>
+  <path d="M27 18.5L44 28L27 37.5Z" fill="#2563EB" stroke="#2563EB" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>
