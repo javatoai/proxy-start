@@ -1,24 +1,24 @@
 # macOS 交付说明
 
-Proxy Start 0.1.12 的 macOS 交付目标是 Apple Silicon（arm64）和 Intel（amd64）。打包脚本从 Windows 交叉编译两个原生 Go 可执行文件，分别放入 `Proxy Start.app`，再生成 ZIP 和 SHA-256 清单。
+Proxy Start 0.1.13 的 macOS 交付目标是 Apple Silicon（arm64）和 Intel（amd64）。打包脚本从 Windows 交叉编译两个原生 Go 可执行文件，分别放入 `Proxy Start.app`，再生成 ZIP 和 SHA-256 清单。
 
 ```powershell
-.\scripts\pack-macos.ps1 -OutputDir dist\release-0.1.12-macos -Version 0.1.12
+.\scripts\pack-macos.ps1 -OutputDir dist\release-0.1.13-macos -Version 0.1.13
 ```
 
 如需覆盖同名的 arm64/amd64 包和校验文件，显式添加 `-Force`；脚本不会删除输出目录里的其他文件。本地快速构建可以添加 `-SkipTests`。脚本要求 Go 1.27.x，优先使用项目内 `.tools/go/bin/go.exe`，也可以通过 `-GoExe` 指定可执行文件。MyGO v0.5.5 的默认最低 macOS 版本来自其本地源码 `cmd/mygo/config.go`：`12.0`，因此包内 `Info.plist` 写入 `LSMinimumSystemVersion=12.0`。
 
 脚本会读取交叉编译产物的 Mach-O 头，确认它是对应架构的 `MH_EXECUTE`；创建 ZIP 后还会读取外部属性，确认可执行文件为 `100755`、`Info.plist` 为 `100644`，并拒绝 ZIP 内的 Windows 反斜杠路径。
 
-生成的文件位于 `dist/release-0.1.12-macos/`，包括：
+生成的文件位于 `dist/release-0.1.13-macos/`，包括：
 
 - `ProxyStart-macos-arm64.zip`：`Proxy Start.app` 和包内 `checksums.sha256`；
 - `ProxyStart-macos-amd64.zip`：Intel Mac 对应的同结构应用包；
 - `checksums.sha256`：两个 ZIP 的发布校验清单。
 
-解压后将 `Proxy Start.app` 拖入“应用程序”文件夹，再双击启动。0.1.12 构建包为可运行的未签名 ZIP，未经过 Apple 公证，也尚未在 Mac 实机运行或验收。首次打开时，macOS 可能需要在“系统设置 → 隐私与安全性”中允许打开；这不是代码签名完成的证明。代理控制台通过私有临时脚本向 Terminal 传递环境变量，Mac 实机运行、签名和公证仍待完成。
+解压后将 `Proxy Start.app` 拖入“应用程序”文件夹，再双击启动。0.1.13 构建包为可运行的未签名 ZIP，未经过 Apple 公证，也尚未在 Mac 实机运行或验收。首次打开时，macOS 可能需要在“系统设置 → 隐私与安全性”中允许打开；这不是代码签名完成的证明。代理控制台通过私有临时脚本向 Terminal 传递环境变量，Mac 实机运行、签名和公证仍待完成。
 
-0.1.11 已加入域名绕过规则和新品牌图标；0.1.12 延续这些能力。macOS 当前支持 Codex 原生代理启动、`.app` 身份解析、Keychain 凭据、按域名绕过和代理控制台环境注入；不提供按程序强制代理。Codex 的无认证 HTTP 启动会把 `example.com` 展开为根域及子域的 Chromium `--proxy-bypass-list`，并同时传递 `NO_PROXY` / `no_proxy`；控制台用非空规则覆盖子 shell 的值，空规则清除继承值。规则只在下一次启动、重启或打开新控制台时读取，不修改 VPN、TUN 或系统路由。对不支持的协议、认证或强制代理请求会返回明确错误，不会静默直连。Apple Silicon / Intel 交叉编译成功、CI 单元测试通过或 Windows 上的 ZIP 检查，都不能代替 Mac 实机 GUI、Codex 网络、Terminal 控制台和 Keychain 验收。应用图标继续以单一 `assets/proxy-start.svg` 为源。
+0.1.11 已加入域名绕过规则和新品牌图标；0.1.13 延续这些能力。macOS 当前支持 Codex 原生代理启动、`.app` 身份解析、Keychain 凭据、按域名绕过和代理控制台环境注入；不提供按程序强制代理。Codex 的无认证 HTTP 启动会把 `example.com` 展开为根域及子域的 Chromium `--proxy-bypass-list`，并同时传递 `NO_PROXY` / `no_proxy`；控制台用非空规则覆盖子 shell 的值，空规则清除继承值。规则只在下一次启动、重启或打开新控制台时读取，不修改 VPN、TUN 或系统路由。对不支持的协议、认证或强制代理请求会返回明确错误，不会静默直连。Apple Silicon / Intel 交叉编译成功、CI 单元测试通过或 Windows 上的 ZIP 检查，都不能代替 Mac 实机 GUI、Codex 网络、Terminal 控制台和 Keychain 验收。应用图标继续以单一 `assets/proxy-start.svg` 为源。
 
 正式分发前请在对应的 macOS 机器上重新验证，并使用 Apple Developer 证书完成签名与公证。典型流程如下：
 

@@ -19,7 +19,7 @@ func WindowsCapabilities() PlatformCapabilities {
 		Name:                  "Windows",
 		ForceProxySupported:   true,
 		ForceProxyInstallable: true,
-		NativeAdapterIDs:      []string{"codex"},
+		NativeAdapterIDs:      []string{"codex", "claude"},
 		AppExtensions:         []string{"exe", "lnk"},
 		SystemAppsDescription: "隐藏微软软件及 Windows 系统组件",
 		DragDescription:       "拖入 .exe 或快捷方式，也可添加已安装应用",

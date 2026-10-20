@@ -68,7 +68,7 @@ func (c *ProcessController) Start(ctx context.Context, spec domain.LaunchSpec) (
 	if args == nil {
 		args = append([]string(nil), identity.Arguments...)
 	}
-	if identity.PackageFamily != "" && identity.ApplicationID != "" {
+	if !spec.DirectLaunch && identity.PackageFamily != "" && identity.ApplicationID != "" {
 		return c.startPackaged(ctx, domain.LaunchSpec{Identity: identity, Arguments: args, Environment: spec.Environment, UnsetEnvironment: spec.UnsetEnvironment})
 	}
 

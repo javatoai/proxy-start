@@ -46,9 +46,13 @@ func (a CodexAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoi
 		return domain.LaunchSpec{}, fmt.Errorf("native Codex supports only unauthenticated HTTP proxies")
 	}
 
-	// A packaged Codex launch is activated by the platform ProcessController.
-	// We only provide the bootstrap's effective command-line and environment;
-	// this package never invokes PowerShell or an AppX API.
+	return planChromiumHTTP(identity, proxy, bypass)
+}
+
+// planChromiumHTTP builds the arguments and child environment shared by the
+// supported desktop applications. Package activation stays in the platform
+// ProcessController; constructing a plan never starts a process.
+func planChromiumHTTP(identity domain.AppIdentity, proxy domain.ProxyEndpoint, bypass domain.BypassPolicy) (domain.LaunchSpec, error) {
 	identityCopy := cloneIdentity(identity)
 	args := withProxyServer(identity.Arguments, proxyURL(proxy))
 	args = withProxyBypassList(args, bypass)

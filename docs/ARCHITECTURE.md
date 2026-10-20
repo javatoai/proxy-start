@@ -43,6 +43,8 @@ cmd/proxy-start（组装入口）
 5. 原生方式生成 `LaunchSpec` 并交给平台执行；强制方式先提交显式路径规则，再启动目标程序。
 6. 记录实际 PID、创建时间和路径。进程启动成功不自动升级为“实际连接已验证”。
 
+`LaunchSpec.DirectLaunch` 可让支持直接执行的桌面程序使用普通进程启动，同时保留包身份。Windows Store Claude 原生适配启用该选项：每次仍通过 AppX 解析当前版本，再直接运行 `claude.exe` 并继承所选代理环境。这样与现有可用脚本保持相同启动机制，避免包内 PowerShell 激活丢失启动配置环境。Codex 继续使用打包应用激活路径。
+
 ## 代理控制台用例
 
 代理设置表格中的“打开代理控制台”调用 `Desktop.OpenProxyConsole`。它先读取选中的代理配置和凭据；协议为自动检测时，按 HTTP 已验证、SOCKS5 已验证的顺序选择，未得到已验证结果就返回错误，不把协议猜测当成成功。随后调用注入的 `application.ConsoleLauncher`：
@@ -85,7 +87,7 @@ type NativeAdapter interface {
 }
 ```
 
-参考 `internal/adapters/native/adapters.go` 的 Codex 实现。生产名单集中在 `native.Production()`，首期仅注册 Codex。`Match` 使用真实软件身份；`Supports` 声明支持的协议、认证和绕过策略边界；`Plan` 是纯函数，复制参数与环境设置，不能更改传入对象或直接启动进程。适配器若不支持绕过，必须在 `Supports` 中显式拒绝非空策略，不能静默忽略规则。新增支持时修改该名单，不修改启动器内的条件分支。macOS bundle ID 与路径规则参考 [OpenAI 官方启动器](https://github.com/openai/codex/blob/main/codex-rs/cli/src/desktop_app/mac.rs)。
+参考 `internal/adapters/native/adapters.go` 的 Codex 实现和 `claude.go` 的 Windows Store Claude 实现。生产名单集中在 `native.Production()`，注册 Codex 与 Claude；Claude 仅匹配 Store 包族 `Claude_pzs8sxrjxfjjc`（或 AUMID 中的同一包族）与 `claude.exe` 的组合。Windows 平台能力声明两者，macOS 仍仅声明 Codex。`Match` 使用真实软件身份；`Supports` 声明支持的协议、认证和绕过策略边界；`Plan` 是纯函数，复制参数与环境设置，不能更改传入对象或直接启动进程。两者共用 Chromium HTTP 参数、域名绕过和子进程环境构建。适配器若不支持绕过，必须在 `Supports` 中显式拒绝非空策略，不能静默忽略规则。新增支持时修改该名单，不修改启动器内的条件分支。macOS bundle ID 与路径规则参考 [OpenAI 官方启动器](https://github.com/openai/codex/blob/main/codex-rs/cli/src/desktop_app/mac.rs)。
 
 新增适配器至少测试身份误匹配、协议与认证边界、已有代理参数处理，以及输入不可变性。应用需要新的平台能力时，再扩展对应小接口，不给已有接口加入无关方法。
 

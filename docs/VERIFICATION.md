@@ -1,6 +1,27 @@
 # 验证记录
 
-验证环境：2026-10-19，Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5。当前文档目标发布为 0.1.12（Windows `release-0.1.12`，macOS `release-0.1.12-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
+验证环境：Windows 11 x64，项目内 Go 1.27.2，MyGO v0.5.5，各次验证日期见对应小节。当前文档目标发布为 0.1.13（Windows `release-0.1.13`，macOS `release-0.1.13-macos`）。以下分别记录可重复测试、当前机器结果和仍需实机验收的项目；“规则已应用”不代表目标软件流量已验证。
+
+## 2026-10-20 Windows Store Claude 原生启动
+
+本次在 Windows amd64、项目内 Go 1.27.2、MyGO v0.5.5 下完成 `scripts/build.ps1 -GUI -OutputDir dist/claude-preview`（含 `go test ./...`）和 `go vet ./...`，均通过。Windows 客户端与 helper 已生成，图标、PE 构建信息和 helper 摘要绑定检查通过；预览程序的 `--resolve` 及隔离配置 `--check` 通过，产物摘要保存于 `dist/claude-preview/checksums.sha256`。本机未安装 ProxiFyre，Claude 原生启动冒烟仍通过。
+
+新增测试覆盖 Claude Store 包族与可执行入口共同识别、更新后的版本目录、错误包族和仅显示名 / 文件名的误匹配、无认证 HTTP 能力、代理参数替换、大小写代理环境变量、空 / 非空域名绕过、输入不可变性，以及 Claude 原生策略与 Codex / Chrome 回归。`LaunchSpec.DirectLaunch` 让 Claude 通过普通进程启动保留代理环境，Codex 的打包激活选择由回归测试覆盖。
+
+本机包诊断 `TestClaudeWindowsInstalledIntegration` 通过：已安装应用列表与重新解析均得到 `Claude_pzs8sxrjxfjjc!Claude`，可执行入口为当前 Store 安装目录内的 `app\Claude.exe`。路径来自 AppX 元数据，不固定版本目录。
+
+实机启动 `TestClaudeWindowsLaunchIntegration` 通过：使用真实解析器、进程控制器和代理探测，通过 `Desktop.AddApp` / `Desktop.Start` 启动 Claude；内存配置指定无认证 HTTP `127.0.0.1:7897`、绕过域名 `localhost`，并注入拒绝强制代理的后端。运行状态为 `native`、适配器为 `claude`，启动后的 Claude 保持运行。主进程 PID 57244 的实际参数包含 `--proxy-server=http://127.0.0.1:7897 --proxy-bypass-list=localhost;*.localhost`；后续采样中，网络子进程 PID 23648 有 9 条到 `127.0.0.1:7897` 的 `Established` TCP 连接。用户原有设置文件在验证前后相同。
+
+这次已验证启动链路、实际参数和代理 TCP 连接；尚未执行 Claude 对话发送、登录流程或完整 GUI 交互验收，运行状态中的 `ConnectionVerified` 仍为 false。复现命令如下；启动用例会保留已有 Claude 会话（跳过测试），仅在 Claude 未运行时启动新实例并保留窗口：
+
+```powershell
+$env:PROXY_START_CLAUDE_DIAGNOSTIC = '1'
+& .\.tools\go\bin\go.exe test ./internal/adapters/native -run '^TestClaudeWindowsInstalledIntegration$' -count=1 -v
+Remove-Item Env:PROXY_START_CLAUDE_DIAGNOSTIC
+$env:PROXY_START_CLAUDE_LAUNCH = '1'
+& .\.tools\go\bin\go.exe test ./internal/adapters/native -run '^TestClaudeWindowsLaunchIntegration$' -count=1 -v
+Remove-Item Env:PROXY_START_CLAUDE_LAUNCH
+```
 
 ## 2026-10-19 0.1.11 域名绕过与品牌图标验证
 
@@ -14,7 +35,7 @@
 
 | 范围 | 已覆盖的行为 |
 | --- | --- |
-| 原生适配器与策略 | Codex / Chrome / Edge 身份匹配、HTTP / SOCKS5 与认证能力边界、旧代理参数替换、混合端口优先选择已验证协议、强制代理回退 |
+| 原生适配器与策略 | Codex / Claude / Chrome / Edge 身份匹配、HTTP / SOCKS5 与认证能力边界、旧代理参数替换、混合端口优先选择已验证协议、强制代理回退 |
 | 应用用例 | 默认与单独代理、已有进程发现、重复启动、重新解析更新后的程序身份、启动失败回滚、关联进程存活、共享会话不互相覆盖、退出不结束目标程序 |
 | 配置与凭据 | 配置原子保存、损坏配置保留、快照隔离；Windows 凭据管理器独立条目的写入 / 读取 / 删除 |
 | 域名绕过策略 | `BypassPolicy` 规范化、去重、旧配置兼容、Codex 参数清理与根域 / 子域展开、控制台 `NO_PROXY` 覆盖及空值清理；Windows 工作区路由验证见下文 |
@@ -66,7 +87,7 @@ $env:PROXY_START_WINDOWS_DIAGNOSTIC = '1'
 
 ## 交付
 
-源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.12/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。品牌图标以 `assets/proxy-start.svg` 为唯一源，32px 窗口 / 托盘图像、PE/ICO、ICNS 和 1024px 预览均由它派生。
+源码、架构及适配器扩展示例、构建脚本、每用户安装 / 卸载脚本与 Windows x64 便携包均在项目内。安装 / 卸载脚本已通过 Windows PowerShell 5.1 解析与 `-WhatIf` 检查。当前新版包目标位于 `dist/release-0.1.13/`；包内的 `checksums.sha256` 可用于核对文件，该发布目录下的 `checksums.sha256` 对应两个压缩包。品牌图标以 `assets/proxy-start.svg` 为唯一源，32px 窗口 / 托盘图像、PE/ICO、ICNS 和 1024px 预览均由它派生。
 
 ## 0.1.12 Windows PE 元数据修复
 

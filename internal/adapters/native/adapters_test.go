@@ -156,6 +156,9 @@ func TestCodexSupportsAndPlansHTTPWithoutCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
+	if spec.DirectLaunch {
+		t.Fatal("Codex must retain its packaged activation path")
+	}
 	wantArgs := []string{"--user-data-dir", "C:\\Codex Profile", "--flag", "--proxy-server=http://127.0.0.1:7897"}
 	if !reflect.DeepEqual(spec.Arguments, wantArgs) {
 		t.Fatalf("arguments = %#v, want %#v", spec.Arguments, wantArgs)
@@ -239,19 +242,24 @@ func TestCodexPlansCanonicalBypassListAndEnvironment(t *testing.T) {
 	}
 }
 
-func TestProductionRegistryContainsOnlyCodex(t *testing.T) {
+func TestProductionRegistryContainsCodexAndClaude(t *testing.T) {
 	adapters := Production()
-	if len(adapters) != 1 {
-		t.Fatalf("production adapter count = %d, want 1", len(adapters))
+	wantIDs := []string{"codex", "claude"}
+	if len(adapters) != len(wantIDs) {
+		t.Fatalf("production adapter count = %d, want %d", len(adapters), len(wantIDs))
 	}
-	if adapters[0].ID() != "codex" {
-		t.Fatalf("production adapter id = %q, want codex", adapters[0].ID())
-	}
-	if adapters[0].Match(domain.AppIdentity{Executable: `C:\Program Files\Google\Chrome\Application\chrome.exe`}) {
-		t.Fatal("Chrome must use the forced-proxy fallback")
-	}
-	if adapters[0].Match(domain.AppIdentity{Executable: `C:\Program Files\Microsoft\Edge\Application\msedge.exe`}) {
-		t.Fatal("Edge must use the forced-proxy fallback")
+	for i, adapter := range adapters {
+		if adapter.ID() != wantIDs[i] {
+			t.Fatalf("production adapter id = %q, want %q", adapter.ID(), wantIDs[i])
+		}
+		for _, executable := range []string{
+			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
+		} {
+			if adapter.Match(domain.AppIdentity{Executable: executable}) {
+				t.Fatalf("%s must use the forced-proxy fallback, matched %s", executable, adapter.ID())
+			}
+		}
 	}
 }
 

@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build (for example v0.1.12)
+        description: Existing version tag to build (for example v0.1.13)
         required: true
-        default: v0.1.12
+        default: v0.1.13
         type: string
 
 permissions:

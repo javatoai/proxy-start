@@ -1,6 +1,6 @@
 # 平台范围与后续实现
 
-当前实现 Windows 与 macOS 原生客户端。原生适配名单首期只有 Codex；Windows 另有按程序强制代理后端。macOS 提供 arm64 / amd64 交叉编译包，尚未实机验收，不包含强制代理。Linux 暂不支持，也不生成 Linux 产物。
+当前实现 Windows 与 macOS 原生客户端。Windows 原生适配 Codex 和 Store 版 Claude Desktop，另有按程序强制代理后端。macOS 原生适配 Codex，提供 arm64 / amd64 交叉编译包，尚未实机验收，不包含强制代理。Linux 暂不支持，也不生成 Linux 产物。
 
 ## macOS
 

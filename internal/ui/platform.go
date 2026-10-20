@@ -29,12 +29,25 @@ func (m *model) uiFontFamily() string {
 }
 
 func nativeAdapterSummary(platform application.PlatformCapabilities) string {
+	names := make([]string, 0, len(platform.NativeAdapterIDs))
+	seen := make(map[string]bool)
 	for _, id := range platform.NativeAdapterIDs {
-		if strings.EqualFold(strings.TrimSpace(id), "codex") {
-			return "原生适配 Codex"
+		id = strings.ToLower(strings.TrimSpace(id))
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		switch id {
+		case "codex":
+			names = append(names, "Codex")
+		case "claude":
+			names = append(names, "Claude")
 		}
 	}
-	return "当前无可用原生适配"
+	if len(names) == 0 {
+		return "当前无可用原生适配"
+	}
+	return "原生适配 " + strings.Join(names, "、")
 }
 
 func backendPresentationForPlatform(backend domain.BackendStatus, platform application.PlatformCapabilities, t *ui.Theme) (label, summary string, color ui.Color) {

@@ -37,6 +37,27 @@ func TestMacOSPlatformPresentationAndFont(t *testing.T) {
 	}
 }
 
+func TestNativeAdapterSummaryFollowsPlatformCapabilities(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		platform application.PlatformCapabilities
+		want     string
+	}{
+		{"Windows", application.WindowsCapabilities(), "原生适配 Codex、Claude"},
+		{"macOS", application.MacOSCapabilities(), "原生适配 Codex"},
+		{"Claude only", application.PlatformCapabilities{NativeAdapterIDs: []string{"claude"}}, "原生适配 Claude"},
+		{"duplicates and unknown", application.PlatformCapabilities{NativeAdapterIDs: []string{" CODEX ", "unknown", "codex", "CLAUDE"}}, "原生适配 Codex、Claude"},
+		{"unknown", application.PlatformCapabilities{NativeAdapterIDs: []string{"unknown"}}, "当前无可用原生适配"},
+		{"empty", application.PlatformCapabilities{}, "当前无可用原生适配"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nativeAdapterSummary(test.platform); got != test.want {
+				t.Fatalf("native adapter summary = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestProgramDialogOptionsFollowPlatformAppExtensions(t *testing.T) {
 	tests := []struct {
 		name       string

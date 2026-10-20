@@ -9,7 +9,7 @@
   <a href="#文档">文档</a>
 </p>
 
-Proxy Start 面向已经拥有本机或远程代理的桌面用户：保存一个代理配置，把程序拖入启动列表，再选择启动、结束或重启。界面使用 MyGO 原生控件，不依赖 WebView、Electron 或 JVM。当前目标版本为 **0.1.12**，延续代理域名绕过规则和新的 SVG 品牌图标，并修复 Windows PE 构建元数据；Windows x64 是首版完整交付平台，macOS 提供可运行源码和交叉编译包，但仍需 Mac 实机验收。
+Proxy Start 面向已经拥有本机或远程代理的桌面用户：保存一个代理配置，把程序拖入启动列表，再选择启动、结束或重启。界面使用 MyGO 原生控件，不依赖 WebView、Electron 或 JVM。当前目标版本为 **0.1.13**，新增 Windows Store 版 Claude Desktop 原生代理启动，支持无认证 HTTP 和域名绕过；Windows x64 是首版完整交付平台，macOS 提供可运行源码和交叉编译包，但仍需 Mac 实机验收。
 
 > 代理已应用只表示启动参数或规则已经提交。实际网络连接需要单独验证，不能因为程序成功启动就推断流量已经经过代理。
 
@@ -17,14 +17,14 @@ Proxy Start 面向已经拥有本机或远程代理的桌面用户：保存一�
 
 - **代理配置**：管理 HTTP、SOCKS5 或自动检测代理，支持默认代理、程序单独指定、可选认证和按域名绕过。
 - **应用启动列表**：拖入 `.exe`、快捷方式或 macOS `.app`，也可以从已安装应用中搜索并添加；每项支持启动、结束和重启。
-- **原生与强制代理策略**：首期原生适配 Codex；Windows 对未适配或不满足原生能力的已添加程序按路径使用 ProxiFyre 强制代理。
+- **原生与强制代理策略**：Windows 原生适配 Codex 和 Store 版 Claude Desktop，macOS 原生适配 Codex；Windows 对未适配或不满足原生能力的已添加程序按路径使用 ProxiFyre 强制代理。
 - **代理控制台**：从代理列表打开独立 PowerShell（Windows）或 Terminal（macOS），为新 shell 及其子进程注入代理环境变量。
 - **系统设置**：单独管理主题、隐藏系统软件和 Windows 强制代理组件。
 - **托盘运行**：关闭窗口后收进托盘；完整退出会释放代理组件和桥接，但保留已经启动的目标程序。
 
 “打开代理控制台”会为新 shell 注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 以及对应的小写变量，不改变系统全局环境。只有会读取这些变量的工具才会跟随代理；忽略环境变量、使用自己的配置或显式代理参数的工具不会自动跟随。控制台打开成功也不等同于实际请求成功。
 
-代理编辑器中的“绕过代理的域名”支持换行或逗号分隔。每条规则是一个 ASCII 主机名或域名（包括 Punycode），例如 `example.com` 同时匹配该域名和它的子域名；规则会自动转为小写并去重。首版不接受 URL、端口、通配符或 IP/CIDR。原生 Codex 启动会生成 Chromium 的 `--proxy-bypass-list` 并设置 `NO_PROXY` / `no_proxy`；代理控制台会用规则覆盖子 shell 继承的 bypass，规则为空时清除继承值。规则只影响 Proxy Start 选择的代理，不改写 VPN、TUN 或系统路由，在下一次启动、重启或打开新控制台时生效，已经运行的进程保持原配置。带绕过规则的应用若只能使用 Windows 强制代理，会明确提示当前强制代理模式不支持按域名绕过，并保留原进程。
+代理编辑器中的“绕过代理的域名”支持换行或逗号分隔。每条规则是一个 ASCII 主机名或域名（包括 Punycode），例如 `example.com` 同时匹配该域名和它的子域名；规则会自动转为小写并去重。首版不接受 URL、端口、通配符或 IP/CIDR。Codex 和 Windows Store 版 Claude 原生启动会生成 Chromium 的 `--proxy-bypass-list` 并设置 `NO_PROXY` / `no_proxy`；代理控制台会用规则覆盖子 shell 继承的 bypass，规则为空时清除继承值。规则只影响 Proxy Start 选择的代理，不改写 VPN、TUN 或系统路由，在下一次启动、重启或打开新控制台时生效，已经运行的进程保持原配置。带绕过规则的应用若只能使用 Windows 强制代理，会明确提示当前强制代理模式不支持按域名绕过，并保留原进程。
 
 ## 界面与工作流
 
@@ -86,11 +86,15 @@ flowchart LR
 
    该命令只能验证该 shell 中的请求；要证明某个目标软件的真实流量经过代理，还需要针对该软件做集成验收。
 
+### Claude Desktop
+
+Windows Store 版 Claude 请通过“添加已安装应用”搜索 `Claude` 并添加，选择无认证 HTTP 代理后点击“启动”或“重启”。Clash 混合端口可选择自动检测，检测通过后优先使用原生 HTTP 启动；支持代理配置中的域名绕过，无需 TUN 或强制代理组件。软件会在每次启动时重新解析 Store 包路径，适应应用更新。已有 Claude 实例需要使用“重启”来应用新设置。
+
 ## 支持范围
 
 | 平台 | 原生代理 | 按程序强制代理 | 当前状态 |
 | --- | --- | --- | --- |
-| Windows x64 | Codex，支持无认证 HTTP 和域名绕过 | ProxiFyre + Windows Packet Filter；只为已选择程序生成路径规则，暂不支持域名绕过 | 首版完整客户端路线，需在目标环境验收真实流量 |
+| Windows x64 | Codex、Store 版 Claude Desktop，支持无认证 HTTP 和域名绕过 | ProxiFyre + Windows Packet Filter；只为已选择程序生成路径规则，暂不支持域名绕过 | 首版完整客户端路线，需在目标环境验收真实流量 |
 | macOS arm64 / amd64 | Codex，支持无认证 HTTP 和域名绕过；使用 `.app` 身份、启动参数和环境变量 | 不支持 | 有源码和交叉编译包，尚无 Mac 实机 GUI、Codex、控制台、Keychain、签名或公证验收 |
 | Linux | 不提供 | 不提供 | 暂不支持 |
 
@@ -115,11 +119,11 @@ Windows 强制代理首次使用需要在“系统设置”中准备组件并接
 ```powershell
 .\scripts\build.ps1 -GUI
 .\scripts\run.ps1
-.\scripts\pack.ps1 -OutputDir dist\release-0.1.12 -Proxy http://127.0.0.1:7897
-.\scripts\pack-macos.ps1 -OutputDir dist\release-0.1.12-macos -SkipTests
+.\scripts\pack.ps1 -OutputDir dist\release-0.1.13 -Proxy http://127.0.0.1:7897
+.\scripts\pack-macos.ps1 -OutputDir dist\release-0.1.13-macos -SkipTests
 ```
 
-GitHub Actions 的发布约定与 Silverwing 类似：普通分支和 Pull Request 运行测试与平台构建；推送严格匹配产品版本的 `v0.1.12` 标签时，分别构建 Windows x64 与 macOS arm64 / amd64，汇总经过校验的包，再由发布任务创建 GitHub Release。CI 还会检查 Windows PE 构建元数据，确保 `go version -m` 可读取打包客户端信息。跨平台编译、单元测试和 ZIP 检查不等于 Mac 实机 GUI、Codex 网络或强制代理验收；本地打包也不会安装驱动或发布 Release。具体命令和流程见 [发布说明](docs/RELEASE.md)。
+GitHub Actions 的发布约定与 Silverwing 类似：普通分支和 Pull Request 运行测试与平台构建；推送严格匹配产品版本的 `v0.1.13` 标签时，分别构建 Windows x64 与 macOS arm64 / amd64，汇总经过校验的包，再由发布任务创建 GitHub Release。CI 还会检查 Windows PE 构建元数据，确保 `go version -m` 可读取打包客户端信息。跨平台编译、单元测试和 ZIP 检查不等于 Mac 实机 GUI、Codex 网络或强制代理验收；本地打包也不会安装驱动或发布 Release。具体命令和流程见 [发布说明](docs/RELEASE.md)。
 
 ## 文档
 

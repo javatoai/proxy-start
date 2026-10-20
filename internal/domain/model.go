@@ -110,6 +110,9 @@ type LaunchSpec struct {
 	Arguments        []string
 	Environment      map[string]string
 	UnsetEnvironment []string
+	// DirectLaunch starts a desktop executable without package activation,
+	// while preserving its package identity for discovery and lifecycle checks.
+	DirectLaunch bool
 }
 
 type LaunchPlan struct {
