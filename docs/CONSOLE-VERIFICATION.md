@@ -1,4 +1,15 @@
-# 代理控制台真实请求验证
+# 代理控制台验证
+
+## 2026-11-14 当前精简版
+
+Windows 使用 `TestConsoleChildEnvironmentAndParentIsolation` 和 `TestConsoleCurlUsesProxyAndUnreachableProxyFails` 验证生产 `Launcher.Open`：独立、有界、隐藏的 PowerShell 读取子进程代理环境；本机测试 HTTP 代理收到 curl 的绝对地址请求并返回指定正文；关闭代理端口后，同一请求失败。测试不使用用户真实代理，不改父进程或系统配置，也不会留下交互终端。
+
+当前配置只有共用本机 HTTP 端口，没有认证、域名绕过或 SOCKS5 专用模式。macOS Terminal 实现完成编译，尚未在 Mac 实机执行本轮验证。
+
+## 旧版本历史记录
+
+下面是旧实现的历史验证，不表示当前仍提供其高级代理能力。
+
 
 这份记录验证的是“打开代理控制台后，新 shell 是否真的把请求交给代理”，不是对用户已经打开的交互式 PowerShell 注入命令。验证在 Windows 上运行，测试不会写入 Proxy Start 配置，不修改系统代理，不安装驱动，也不会结束现有目标程序或用户终端。
 

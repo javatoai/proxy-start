@@ -3,192 +3,248 @@ package application
 import (
 	"context"
 	"errors"
+	"net"
 	"proxy-start/internal/domain"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 )
 
-type memorySettings struct {
-	mu       sync.Mutex
+type memoryStore struct {
 	settings domain.Settings
+	err      error
 }
 
-func (s *memorySettings) Load(context.Context) (domain.Settings, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return cloneSettings(s.settings), nil
-}
-func (s *memorySettings) Save(_ context.Context, v domain.Settings) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.settings = cloneSettings(v)
+func (s *memoryStore) Load(context.Context) (domain.Settings, error) { return s.settings, nil }
+func (s *memoryStore) Save(_ context.Context, v domain.Settings) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.settings = v
 	return nil
 }
 
-type memoryCredentials struct{}
-
-func (memoryCredentials) Read(context.Context, string) (string, error) { return "secret", nil }
-func (memoryCredentials) Write(context.Context, string, string) error  { return nil }
-func (memoryCredentials) Delete(context.Context, string) error         { return nil }
-
-type fakeResolver struct{}
-
-func (fakeResolver) Resolve(_ context.Context, path string) (domain.AppIdentity, error) {
-	return domain.AppIdentity{Name: "unknown", Executable: path}, nil
+type fakeResolver struct {
+	identity domain.AppIdentity
+	err      error
 }
-func (fakeResolver) Installed(context.Context) ([]domain.AppIdentity, error) { return nil, nil }
 
-type verifiedProbe struct{}
-
-func (verifiedProbe) Test(context.Context, domain.ProxyEndpoint) (domain.ProbeResult, error) {
-	return domain.ProbeResult{HTTP: true, SOCKS5: true, HTTPVerified: true, SOCKS5Verified: true, TCPVerified: true}, nil
+func (r *fakeResolver) Discover(context.Context) (domain.AppIdentity, error) {
+	return r.identity, r.err
 }
 
 type fakeProcesses struct {
-	mu            sync.Mutex
-	running       bool
-	starts, stops int
-	fail          bool
+	mu                      sync.Mutex
+	handles                 []domain.ProcessHandle
+	infos                   map[int]domain.ProcessInfo
+	finds, starts, inspects int
+	findError               error
+	startError              error
+	stops                   int
+	stopError               error
+	exitOnStopError         bool
+	stopIdentity            domain.AppIdentity
+	spec                    domain.LaunchSpec
 }
 
 func (p *fakeProcesses) Find(context.Context, domain.AppIdentity) ([]domain.ProcessHandle, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.running {
-		return []domain.ProcessHandle{{PID: 123, Executable: "test.exe", StartedAt: time.Now()}}, nil
-	}
-	return nil, nil
+	p.finds++
+	return append([]domain.ProcessHandle(nil), p.handles...), p.findError
 }
-func (p *fakeProcesses) Start(context.Context, domain.LaunchSpec) (domain.ProcessHandle, error) {
+func (p *fakeProcesses) Start(_ context.Context, spec domain.LaunchSpec) (domain.ProcessHandle, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.fail {
-		return domain.ProcessHandle{}, errors.New("start failed")
-	}
 	p.starts++
-	p.running = true
-	return domain.ProcessHandle{PID: 123, Executable: "test.exe", StartedAt: time.Now()}, nil
+	if p.startError != nil {
+		return domain.ProcessHandle{}, p.startError
+	}
+	p.spec = spec
+	handle := domain.ProcessHandle{PID: 90, StartedAt: time.Now(), Executable: spec.Identity.Executable}
+	p.handles = []domain.ProcessHandle{handle}
+	return handle, nil
 }
-func (p *fakeProcesses) Stop(context.Context, domain.AppIdentity, []domain.ProcessHandle) error {
+func (p *fakeProcesses) Inspect(_ context.Context, h domain.ProcessHandle) (domain.ProcessInfo, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inspects++
+	return p.infos[h.PID], nil
+}
+func (p *fakeProcesses) Stop(_ context.Context, identity domain.AppIdentity, _ []domain.ProcessHandle) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stops++
-	p.running = false
+	p.stopIdentity = identity
+	if p.stopError != nil {
+		if p.exitOnStopError {
+			p.handles = nil
+		}
+		return p.stopError
+	}
+	p.handles = nil
 	return nil
 }
-func (p *fakeProcesses) Alive(context.Context, domain.ProcessHandle) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.running
+
+type fakeConsole struct {
+	calls int
+	spec  ConsoleSpec
 }
 
-func desktopFixture(t *testing.T, name string, processes *fakeProcesses) (*Desktop, *fakeBackend) {
+func (c *fakeConsole) Open(_ context.Context, spec ConsoleSpec) error {
+	c.calls++
+	c.spec = spec
+	return nil
+}
+
+func codexFixture() domain.AppIdentity {
+	return domain.AppIdentity{PackageName: "OpenAI.Codex", Executable: "C:/Apps/Codex.exe"}
+}
+func desktopFixture(t *testing.T, p *fakeProcesses, r *fakeResolver, s *memoryStore, c *fakeConsole) *Desktop {
 	t.Helper()
-	settings := domain.DefaultSettings()
-	settings.Apps = []domain.AppEntry{{ID: "app", Name: name, Identity: domain.AppIdentity{Name: name, Executable: "test.exe"}}}
-	backend := &fakeBackend{}
-	desktop, err := NewDesktop(context.Background(), Dependencies{Store: &memorySettings{settings: settings}, Credentials: memoryCredentials{}, Resolver: fakeResolver{}, Processes: processes, Probe: verifiedProbe{}, Backend: backend, Adapters: []NativeAdapter{testAdapter{}}})
+	d, err := NewDesktop(context.Background(), Dependencies{Store: s, Resolver: r, Processes: p, Console: c, CheckPort: func(context.Context, int) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = desktop.Shutdown(ctx)
-	})
-	return desktop, backend
-}
-
-func TestFullQuitNeverStopsLaunchedApplications(t *testing.T) {
-	processes := &fakeProcesses{}
-	desktop, backend := desktopFixture(t, "unknown", processes)
-	if err := desktop.Start(context.Background(), "app"); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := d.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if desktop.Snapshot().Runtimes["app"].Mode != domain.ModeForced {
-		t.Fatal("unknown app did not use forced mode")
+	t.Cleanup(func() { _ = d.Shutdown(context.Background()) })
+	return d
+}
+
+func TestAlreadyRunningIsObservedWithoutLaunchingOrChangingIt(t *testing.T) {
+	p := &fakeProcesses{handles: []domain.ProcessHandle{{PID: 1}, {PID: 2, ParentPID: 1}}, infos: map[int]domain.ProcessInfo{
+		1: {Readable: true, Arguments: []string{"Codex.exe", "--proxy-server=http://127.0.0.1:8000"}},
+		2: {Readable: true, Arguments: []string{"Codex.exe", "--type=renderer"}},
+	}}
+	d := desktopFixture(t, p, &fakeResolver{identity: codexFixture()}, &memoryStore{settings: domain.DefaultSettings()}, &fakeConsole{})
+	if d.Snapshot().State != "running" || d.Snapshot().Proxy.Address != "http://127.0.0.1:8000" {
+		t.Fatalf("snapshot: %+v", d.Snapshot())
 	}
-	if err := desktop.Shutdown(context.Background()); err != nil {
+	if err := d.SaveProxyPort(context.Background(), 9000); err != nil {
 		t.Fatal(err)
 	}
-	if processes.stops != 0 || !processes.running {
-		t.Fatal("full quit killed a target application")
+	if err := d.StartCodex(context.Background()); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("start: %v", err)
 	}
-	if backend.shutdowns == 0 {
-		t.Fatal("full quit failed to release interception")
+	if p.starts != 0 || p.inspects != 1 {
+		t.Fatalf("starts %d inspections %d", p.starts, p.inspects)
 	}
-	if err := desktop.Start(context.Background(), "app"); !errors.Is(err, ErrClosed) {
-		t.Fatalf("launch accepted after quit: %v", err)
-	}
-}
-
-func TestExistingProcessIsDiscoveredAtStartupWithoutProxy(t *testing.T) {
-	processes := &fakeProcesses{running: true}
-	desktop, backend := desktopFixture(t, "unknown", processes)
-	state := desktop.Snapshot().Runtimes["app"]
-	if state.State != domain.StateRunning || state.Detail != ErrAlreadyRunning.Error() {
-		t.Fatalf("startup discovery did not report the existing process: %#v", state)
-	}
-	if state.Mode != "" || state.ProxyApplied || state.ConnectionVerified {
-		t.Fatalf("external process was reported as proxied: %#v", state)
-	}
-	if len(state.Processes) != 1 || processes.starts != 0 || len(backend.applies) != 0 {
-		t.Fatalf("startup discovery changed process or proxy state: handles=%d starts=%d applies=%d", len(state.Processes), processes.starts, len(backend.applies))
+	if d.Snapshot().Proxy.Address != "http://127.0.0.1:8000" {
+		t.Fatal("editing port changed running observation")
 	}
 }
 
-func TestExternalProcessAppearingLaterIsDiscoveredWithoutProxy(t *testing.T) {
-	processes := &fakeProcesses{}
-	desktop, backend := desktopFixture(t, "unknown", processes)
-	processes.mu.Lock()
-	processes.running = true
-	processes.mu.Unlock()
-	desktop.launcher.poll(context.Background())
-	state := desktop.Snapshot().Runtimes["app"]
-	if state.State != domain.StateRunning || len(state.Processes) != 1 {
-		t.Fatalf("poll discovery did not count the external process: %#v", state)
+func TestNoCodexDoesNotBlockProxyConsole(t *testing.T) {
+	console := &fakeConsole{}
+	d := desktopFixture(t, &fakeProcesses{}, &fakeResolver{err: ErrNotFound}, &memoryStore{settings: domain.DefaultSettings()}, console)
+	if d.Snapshot().ScanError == "" {
+		t.Fatal("missing scan error")
 	}
-	if state.Mode != "" || state.ProxyApplied || len(backend.applies) != 0 {
-		t.Fatalf("poll discovery applied proxy rules: %#v", state)
-	}
-}
-
-func TestFailedProcessStartReleasesInterception(t *testing.T) {
-	desktop, backend := desktopFixture(t, "unknown", &fakeProcesses{fail: true})
-	if err := desktop.Start(context.Background(), "app"); err == nil {
-		t.Fatal("start failure disappeared")
-	}
-	if len(desktop.launcher.forced.sessions) != 0 || backend.shutdowns == 0 {
-		t.Fatal("failed launch leaked an engine session")
-	}
-	if desktop.Snapshot().Runtimes["app"].State != domain.StateFailed {
-		t.Fatal("failed launch reported as running")
-	}
-}
-
-func TestDuplicateStartPreservesManagedModeAndDoesNotLaunchTwice(t *testing.T) {
-	processes := &fakeProcesses{}
-	desktop, _ := desktopFixture(t, "known", processes)
-	if err := desktop.Start(context.Background(), "app"); err != nil {
+	if err := d.OpenProxyConsole(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := desktop.Start(context.Background(), "app"); !errors.Is(err, ErrAlreadyRunning) {
-		t.Fatalf("duplicate launch: %v", err)
+	if console.calls != 1 || console.spec.Environment["HTTPS_PROXY"] != "http://127.0.0.1:7897" {
+		t.Fatal("console did not receive shared port")
 	}
-	state := desktop.Snapshot().Runtimes["app"]
-	if processes.starts != 1 || state.Mode != domain.ModeNative || !state.ProxyApplied || state.ConnectionVerified {
-		t.Fatalf("duplicate start damaged managed state: %#v", state)
+	if len(console.spec.UnsetEnvironment) != 2 {
+		t.Fatal("inherited bypass not cleared")
 	}
 }
 
-func TestSnapshotCannotMutatePersistedConfiguration(t *testing.T) {
-	desktop, _ := desktopFixture(t, "known", &fakeProcesses{})
-	snapshot := desktop.Snapshot()
-	snapshot.Settings.Profiles[0].Host = "changed"
-	snapshot.Settings.Apps[0].Name = "changed"
-	actual := desktop.Snapshot()
-	if actual.Settings.Profiles[0].Host == "changed" || actual.Settings.Apps[0].Name == "changed" {
-		t.Fatal("snapshot exposes mutable settings")
+func TestLaunchReResolvesCodexAndRefusesNewlyAppearedProcess(t *testing.T) {
+	p := &fakeProcesses{}
+	r := &fakeResolver{identity: codexFixture()}
+	d := desktopFixture(t, p, r, &memoryStore{settings: domain.DefaultSettings()}, &fakeConsole{})
+	r.identity.Executable = "C:/Apps/updated/Codex.exe"
+	d.deps.CheckPort = func(context.Context, int) error {
+		p.handles = []domain.ProcessHandle{{PID: 11}}
+		return nil
+	}
+	if err := d.StartCodex(context.Background()); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("race check: %v", err)
+	}
+	if p.starts != 0 {
+		t.Fatal("duplicate launch")
+	}
+	if d.Snapshot().Identity.Executable != r.identity.Executable {
+		t.Fatal("stale executable")
+	}
+}
+
+func TestLaunchUsesSharedProxyAndShutdownLeavesChildAlone(t *testing.T) {
+	p := &fakeProcesses{}
+	d := desktopFixture(t, p, &fakeResolver{identity: codexFixture()}, &memoryStore{settings: domain.DefaultSettings()}, &fakeConsole{})
+	if err := d.SaveProxyPort(context.Background(), 8800); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartCodex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.starts != 1 || p.spec.Environment["HTTP_PROXY"] != "http://127.0.0.1:8800" {
+		t.Fatal("wrong launch environment")
+	}
+	if err := d.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.handles) != 1 {
+		t.Fatal("shutdown changed child")
+	}
+	if err := d.StartCodex(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("operation after shutdown: %v", err)
+	}
+}
+
+func TestInspectionCacheDoesNotSurvivePIDReuse(t *testing.T) {
+	p := &fakeProcesses{handles: []domain.ProcessHandle{{PID: 1, StartedAt: time.Unix(1, 0)}}, infos: map[int]domain.ProcessInfo{1: {Readable: true}}}
+	d := desktopFixture(t, p, &fakeResolver{identity: codexFixture()}, &memoryStore{settings: domain.DefaultSettings()}, &fakeConsole{})
+	p.handles[0].StartedAt = time.Unix(2, 0)
+	p.infos[1] = domain.ProcessInfo{Readable: true, Arguments: []string{"--proxy-server=http://localhost:8000"}}
+	if err := d.ScanCodex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.inspects != 2 || d.Snapshot().Proxy.Kind != "explicit" {
+		t.Fatal("stale PID evidence reused")
+	}
+}
+
+func TestSaveAndObservationFailuresDoNotPublishFalseState(t *testing.T) {
+	store := &memoryStore{settings: domain.DefaultSettings(), err: errors.New("disk full")}
+	p := &fakeProcesses{findError: errors.New("access denied")}
+	d := desktopFixture(t, p, &fakeResolver{identity: codexFixture()}, store, &fakeConsole{})
+	if err := d.SaveProxyPort(context.Background(), 1234); err == nil {
+		t.Fatal("save failure hidden")
+	}
+	if d.Snapshot().Settings.ProxyPort != 7897 || d.Snapshot().State != "unknown" {
+		t.Fatal("uncommitted or unobserved state published")
+	}
+	if err := d.StartCodex(context.Background()); err == nil || p.starts != 0 {
+		t.Fatal("launch after process-query failure")
+	}
+}
+
+func TestLocalPortCheck(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, portString, _ := net.SplitHostPort(listener.Addr().String())
+	port, _ := strconv.Atoi(portString)
+	if err := CheckLocalPort(context.Background(), port); err != nil {
+		t.Fatal(err)
+	}
+	for _, port := range []int{0, -1, 65536} {
+		if err := CheckLocalPort(context.Background(), port); err == nil {
+			t.Fatalf("invalid port %d", port)
+		}
+	}
+	_ = listener.Close()
+	if err := CheckLocalPort(context.Background(), port); err == nil {
+		t.Fatal("closed port accepted")
 	}
 }

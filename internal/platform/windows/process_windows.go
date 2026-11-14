@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -42,13 +44,17 @@ var (
 	queryFullProcessImageName = kernel32.NewProc("QueryFullProcessImageNameW")
 	getProcessTimes           = kernel32.NewProc("GetProcessTimes")
 	terminateProcess          = kernel32.NewProc("TerminateProcess")
+	getPackageFamilyName      = kernel32.NewProc("GetPackageFamilyName")
 	waitForSingleObject       = kernel32.NewProc("WaitForSingleObject")
 )
 
 // ProcessController owns only process lifecycle operations. It has no global
 // process registry, so the GUI can be closed while launched applications keep
 // running normally.
-type ProcessController struct{}
+type ProcessController struct {
+	// Tests supply a fresh GUI binary; production reuses its own executable.
+	packagedLauncher string
+}
 
 var _ application.ProcessController = (*ProcessController)(nil)
 
@@ -79,7 +85,7 @@ func (c *ProcessController) Start(ctx context.Context, spec domain.LaunchSpec) (
 	}
 	cmd.Env = mergeEnvironment(spec.Environment, spec.UnsetEnvironment)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags:    createNewProcessGroup | createBreakawayFromJob,
+		CreationFlags:    createNoWindow | createNewProcessGroup | createBreakawayFromJob,
 		NoInheritHandles: true,
 	}
 	if err := cmd.Start(); err != nil {
@@ -109,12 +115,28 @@ func (c *ProcessController) Find(ctx context.Context, identity domain.AppIdentit
 	if err != nil {
 		return nil, err
 	}
+	if identity.PackageFamily != "" {
+		for _, name := range []string{"Codex.exe", "ChatGPT.exe", "Codex-Code-Mode-Host.exe"} {
+			if strings.EqualFold(name, filepath.Base(target)) {
+				continue
+			}
+			additional, err := enumerateProcesses(name)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, additional...)
+		}
+	}
 	result := make([]domain.ProcessHandle, 0)
 	for _, entry := range entries {
-		if !samePath(entry.executable, target) {
+		matches := samePath(entry.executable, target)
+		if !matches && identity.PackageFamily != "" {
+			matches = strings.EqualFold(processPackageFamily(entry.pid), identity.PackageFamily)
+		}
+		if !matches {
 			continue
 		}
-		result = append(result, domain.ProcessHandle{PID: int(entry.pid), StartedAt: entry.startedAt, Executable: entry.executable, PackageFamily: identity.PackageFamily})
+		result = append(result, domain.ProcessHandle{PID: int(entry.pid), ParentPID: int(entry.parentPID), StartedAt: entry.startedAt, Executable: entry.executable, PackageFamily: identity.PackageFamily})
 	}
 	return result, nil
 }
@@ -140,6 +162,7 @@ func (c *ProcessController) Stop(ctx context.Context, identity domain.AppIdentit
 	if len(handles) == 0 {
 		return nil
 	}
+	capturedAt := time.Now()
 	rawEntries, err := snapshotProcesses()
 	if err != nil {
 		return err
@@ -179,16 +202,30 @@ func (c *ProcessController) Stop(ctx context.Context, identity domain.AppIdentit
 				continue
 			}
 			started := queryProcessStart(rawChild.pid)
-			if started.IsZero() || started.Before(selected[parent].startedAt) {
+			if started.IsZero() || started.Before(selected[parent].startedAt) || started.After(capturedAt) {
 				continue
 			}
-			selected[rawChild.pid] = processEntry{pid: rawChild.pid, parentPID: rawChild.parentPID, executable: canonicalPath(rawChild.name), startedAt: started}
+			path := queryProcessPath(rawChild.pid)
+			if path == "" {
+				continue
+			}
+			selected[rawChild.pid] = processEntry{pid: rawChild.pid, parentPID: rawChild.parentPID, executable: canonicalPath(path), startedAt: started, depth: selected[parent].depth + 1}
 			queue = append(queue, rawChild.pid)
 		}
 	}
 
 	var failures []string
+	ordered := make([]processEntry, 0, len(selected))
 	for _, entry := range selected {
+		ordered = append(ordered, entry)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].depth != ordered[j].depth {
+			return ordered[i].depth > ordered[j].depth
+		}
+		return ordered[i].pid < ordered[j].pid
+	})
+	for _, entry := range ordered {
 		if err := terminateAndWait(ctx, entry); err != nil {
 			failures = append(failures, fmt.Sprintf("PID %d: %v", entry.pid, err))
 		}
@@ -204,6 +241,7 @@ type processEntry struct {
 	parentPID  uint32
 	executable string
 	startedAt  time.Time
+	depth      int
 }
 
 type rawProcessEntry struct {
@@ -325,6 +363,25 @@ func queryProcessPath(pid uint32) string {
 	return syscall.UTF16ToString(buffer[:length])
 }
 
+func processPackageFamily(pid uint32) string {
+	handle, _, _ := openProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
+	if handle == 0 {
+		return ""
+	}
+	defer closeHandle.Call(handle)
+	var length uint32
+	result, _, _ := getPackageFamilyName.Call(handle, uintptr(unsafe.Pointer(&length)), 0)
+	if result != 122 || length == 0 || length > 32768 {
+		return ""
+	}
+	buffer := make([]uint16, length)
+	result, _, _ = getPackageFamilyName.Call(handle, uintptr(unsafe.Pointer(&length)), uintptr(unsafe.Pointer(&buffer[0])))
+	if result != 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buffer)
+}
+
 func queryProcessStart(pid uint32) time.Time {
 	handle, _, _ := openProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
 	if handle == 0 {
@@ -334,12 +391,17 @@ func queryProcessStart(pid uint32) time.Time {
 		return time.Time{}
 	}
 	defer closeHandle.Call(handle)
+	started, _ := processCreationTime(handle)
+	return started
+}
+
+func processCreationTime(handle uintptr) (time.Time, error) {
 	var creation, exit, kernel, user syscall.Filetime
-	result, _, _ := getProcessTimes.Call(handle, uintptr(unsafe.Pointer(&creation)), uintptr(unsafe.Pointer(&exit)), uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user)))
+	result, _, err := getProcessTimes.Call(handle, uintptr(unsafe.Pointer(&creation)), uintptr(unsafe.Pointer(&exit)), uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user)))
 	if result == 0 {
-		return time.Time{}
+		return time.Time{}, err
 	}
-	return filetimeToTime(creation)
+	return filetimeToTime(creation), nil
 }
 
 func filetimeToTime(filetime syscall.Filetime) time.Time {
@@ -352,15 +414,35 @@ func filetimeToTime(filetime syscall.Filetime) time.Time {
 }
 
 func terminateAndWait(ctx context.Context, entry processEntry) error {
-	if entry.pid == uint32(os.Getpid()) || entry.startedAt.IsZero() {
+	if entry.pid <= 4 || entry.pid == uint32(os.Getpid()) || entry.startedAt.IsZero() {
 		return errors.New("拒绝结束当前进程或未知身份进程")
 	}
-	handle, _, callErr := openProcess.Call(processTerminate|processSynchronize, 0, uintptr(entry.pid))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	handle, _, callErr := openProcess.Call(processTerminate|processSynchronize|processQueryLimitedInformation, 0, uintptr(entry.pid))
 	if handle == 0 {
+		if errors.Is(callErr, syscall.Errno(87)) || processGoneOrReused(entry) {
+			return nil
+		}
 		return callErr
 	}
 	defer closeHandle.Call(handle)
+	if result, _, _ := waitForSingleObject.Call(handle, 0); result == waitObject0 {
+		return nil
+	}
+	started, err := processCreationTime(handle)
+	if err != nil {
+		return err
+	}
+	// The original PID may have exited and been reused after tree discovery.
+	if !started.Equal(entry.startedAt) {
+		return nil
+	}
 	if result, _, err := terminateProcess.Call(handle, 1); result == 0 {
+		if result, _, _ := waitForSingleObject.Call(handle, 0); result == waitObject0 {
+			return nil
+		}
 		return err
 	}
 	for {
@@ -375,6 +457,19 @@ func terminateAndWait(ctx context.Context, entry processEntry) error {
 			return fmt.Errorf("等待进程退出失败")
 		}
 	}
+}
+
+func processGoneOrReused(entry processEntry) bool {
+	handle, _, err := openProcess.Call(processQueryLimitedInformation|processSynchronize, 0, uintptr(entry.pid))
+	if handle == 0 {
+		return errors.Is(err, syscall.Errno(87))
+	}
+	defer closeHandle.Call(handle)
+	if result, _, _ := waitForSingleObject.Call(handle, 0); result == waitObject0 {
+		return true
+	}
+	started, readErr := processCreationTime(handle)
+	return readErr == nil && !started.Equal(entry.startedAt)
 }
 
 func mergeEnvironment(overrides map[string]string, unset []string) []string {
@@ -398,11 +493,37 @@ func mergeEnvironment(overrides map[string]string, unset []string) []string {
 }
 
 type packagedLaunchConfig struct {
-	Executable       string            `json:"executable"`
-	Arguments        string            `json:"arguments"`
-	WorkingDirectory string            `json:"workingDirectory"`
-	Environment      map[string]string `json:"environment"`
-	UnsetEnvironment []string          `json:"unsetEnvironment"`
+	Executable       string                     `json:"executable"`
+	Arguments        string                     `json:"arguments"`
+	WorkingDirectory string                     `json:"workingDirectory"`
+	Environment      []packagedEnvironmentValue `json:"environment"`
+	UnsetEnvironment []string                   `json:"unsetEnvironment"`
+}
+
+type packagedEnvironmentValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+func packagedConfig(spec domain.LaunchSpec) packagedLaunchConfig {
+	// Keep environment names as values in the self-contained launch request.
+	// Preserve both aliases until Windows applies its case-insensitive semantics.
+	keys := make([]string, 0, len(spec.Environment))
+	for name := range spec.Environment {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	environment := make([]packagedEnvironmentValue, 0, len(keys))
+	for _, name := range keys {
+		environment = append(environment, packagedEnvironmentValue{Name: name, Value: spec.Environment[name]})
+	}
+	return packagedLaunchConfig{
+		Executable:       spec.Identity.Executable,
+		Arguments:        joinWindowsArguments(spec.Arguments),
+		WorkingDirectory: firstNonEmpty(spec.Identity.WorkingDirectory, filepath.Dir(spec.Identity.Executable)),
+		Environment:      environment,
+		UnsetEnvironment: spec.UnsetEnvironment,
+	}
 }
 
 type packagedLaunchResult struct {
@@ -422,18 +543,6 @@ func (c *ProcessController) startPackaged(ctx context.Context, spec domain.Launc
 	if identity.PackageFamily == "" || applicationID == "" {
 		return domain.ProcessHandle{}, errors.New("打包应用缺少包族或应用 ID")
 	}
-	args := append([]string(nil), spec.Arguments...)
-	config := packagedLaunchConfig{
-		Executable:       identity.Executable,
-		Arguments:        joinWindowsArguments(args),
-		WorkingDirectory: firstNonEmpty(identity.WorkingDirectory, filepath.Dir(identity.Executable)),
-		Environment:      spec.Environment,
-		UnsetEnvironment: spec.UnsetEnvironment,
-	}
-	configBytes, err := json.Marshal(config)
-	if err != nil {
-		return domain.ProcessHandle{}, err
-	}
 	resultFile, err := os.CreateTemp("", "proxy-start-*.result.json")
 	if err != nil {
 		return domain.ProcessHandle{}, err
@@ -442,13 +551,26 @@ func (c *ProcessController) startPackaged(ctx context.Context, spec domain.Launc
 	_ = resultFile.Close()
 	_ = os.Remove(resultPath)
 	defer os.Remove(resultPath)
+	defer os.Remove(resultPath + ".tmp")
+	launcher := c.packagedLauncher
+	if launcher == "" {
+		launcher, err = os.Executable()
+		if err != nil {
+			return domain.ProcessHandle{}, err
+		}
+	}
+	configBytes, err := json.Marshal(packagedLaunchRequest{Launch: packagedConfig(spec), ResultPath: resultPath})
+	if err != nil {
+		return domain.ProcessHandle{}, err
+	}
 
 	env := map[string]string{
 		"PROXY_START_PACKAGE_FAMILY": identity.PackageFamily,
 		"PROXY_START_APPLICATION_ID": applicationID,
-		"PROXY_START_LAUNCH_B64":     base64.StdEncoding.EncodeToString(configBytes),
-		"PROXY_START_RESULT_PATH":    resultPath,
+		"PROXY_START_LAUNCHER_EXE":   launcher,
+		"PROXY_START_LAUNCHER_ARGS":  packagedLaunchFlag + " " + base64.StdEncoding.EncodeToString(configBytes),
 	}
+	log.Printf("启动打包应用 package=%q app=%q executable=%q", identity.PackageFamily, applicationID, identity.Executable)
 	if _, err := runPowerShellJSON(ctx, packagedOuterScript, env); err != nil {
 		return domain.ProcessHandle{}, err
 	}
@@ -463,11 +585,13 @@ func (c *ProcessController) startPackaged(ctx context.Context, spec domain.Launc
 				return domain.ProcessHandle{}, fmt.Errorf("解析打包启动结果失败: %w", jsonErr)
 			}
 			if result.Error != "" {
+				log.Printf("打包应用启动失败：%s", result.Error)
 				return domain.ProcessHandle{}, errors.New(result.Error)
 			}
 			if result.ProcessID <= 0 {
 				return domain.ProcessHandle{}, errors.New("打包启动未返回进程 ID")
 			}
+			log.Printf("打包应用启动回执 pid=%d", result.ProcessID)
 			handle, handleErr := processHandle(result.ProcessID)
 			if handleErr != nil {
 				return domain.ProcessHandle{}, handleErr
@@ -477,6 +601,7 @@ func (c *ProcessController) startPackaged(ctx context.Context, spec domain.Launc
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	log.Printf("打包应用启动未收到回执 package=%q result=%q", identity.PackageFamily, resultPath)
 	return domain.ProcessHandle{}, errors.New("打包应用启动超时")
 }
 
@@ -526,26 +651,4 @@ func quoteWindowsArgument(value string) string {
 
 const packagedOuterScript = `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$bootstrap = @'
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-try {
-  $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:PROXY_START_LAUNCH_B64))
-  $config = $json | ConvertFrom-Json
-  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-  $startInfo.FileName = [string]$config.executable
-  $startInfo.Arguments = [string]$config.arguments
-  $startInfo.UseShellExecute = $false
-  $startInfo.WorkingDirectory = [string]$config.workingDirectory
-  foreach ($name in @($config.unsetEnvironment)) { if ($name) { $startInfo.EnvironmentVariables.Remove([string]$name) } }
-  foreach ($property in $config.environment.PSObject.Properties) { $startInfo.EnvironmentVariables[$property.Name] = [string]$property.Value }
-  $process = [Diagnostics.Process]::Start($startInfo)
-  $result = @{ processId = $process.Id }
-} catch { $result = @{ error = $_.Exception.Message } }
-$tmp = $env:PROXY_START_RESULT_PATH + '.tmp'
-[IO.File]::WriteAllText($tmp, ($result | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
-[IO.File]::Move($tmp, $env:PROXY_START_RESULT_PATH)
-'@
-$bootstrapB64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
-$arguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $bootstrapB64
-Invoke-CommandInDesktopPackage -PackageFamilyName $env:PROXY_START_PACKAGE_FAMILY -AppId $env:PROXY_START_APPLICATION_ID -Command "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Args $arguments -PreventBreakaway`
+Invoke-CommandInDesktopPackage -PackageFamilyName $env:PROXY_START_PACKAGE_FAMILY -AppId $env:PROXY_START_APPLICATION_ID -Command $env:PROXY_START_LAUNCHER_EXE -Args $env:PROXY_START_LAUNCHER_ARGS -PreventBreakaway`

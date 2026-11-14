@@ -23,6 +23,7 @@ import (
 type Launcher struct {
 	commandArgs []string
 	waitForExit bool
+	hideWindow  bool
 }
 
 var _ application.ConsoleLauncher = (*Launcher)(nil)
@@ -83,6 +84,7 @@ func (l *Launcher) Open(ctx context.Context, spec application.ConsoleSpec) error
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags:    0x00000010, // CREATE_NEW_CONSOLE
 		NoInheritHandles: true,
+		HideWindow:       l.hideWindow,
 	}
 	if err := cmd.Start(); err != nil {
 		return errors.New("打开代理控制台失败")

@@ -88,10 +88,9 @@ function Assert-ClientStopped([string]$InstallPath) {
 
 $sourceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $sourceExe = Join-Path $sourceRoot "proxy-start.exe"
-$sourceHelper = Join-Path $sourceRoot "proxy-start-helper.exe"
 $sourceBrandIcon = Join-Path $sourceRoot "assets\proxy-start.ico"
-if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf) -or -not (Test-Path -LiteralPath $sourceHelper -PathType Leaf)) {
-    throw "安装包不完整：需要 proxy-start.exe 和 proxy-start-helper.exe。"
+if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) {
+    throw "安装包不完整：需要 proxy-start.exe。"
 }
 if (-not (Test-Path -LiteralPath $sourceBrandIcon -PathType Leaf)) {
     throw "安装包不完整：缺少 Proxy Start 品牌图标 $sourceBrandIcon。"
@@ -175,4 +174,4 @@ if ($DesktopShortcut) {
 
 Write-Host "已安装到：$installRoot" -ForegroundColor Green
 Write-Host "配置和凭据保留在用户目录，不会被安装或卸载脚本删除。" -ForegroundColor DarkGray
-Write-Host "安装脚本不会安装、启动或停止 ProxiFyre 服务/驱动。" -ForegroundColor DarkGray
+Write-Host "安装无需管理员权限，不安装服务或驱动。" -ForegroundColor DarkGray

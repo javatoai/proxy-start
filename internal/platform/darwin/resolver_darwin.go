@@ -11,10 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+
 	"strings"
 	"time"
 
+	"proxy-start/internal/adapters/native"
 	"proxy-start/internal/application"
 	"proxy-start/internal/domain"
 )
@@ -23,7 +24,7 @@ type Resolver struct {
 	commandTimeout time.Duration
 }
 
-var _ application.AppResolver = (*Resolver)(nil)
+var _ application.CodexResolver = (*Resolver)(nil)
 
 func NewResolver() *Resolver { return &Resolver{commandTimeout: 8 * time.Second} }
 
@@ -49,55 +50,30 @@ func (r *Resolver) Resolve(ctx context.Context, input string) (domain.AppIdentit
 	return r.resolveBundle(ctx, path)
 }
 
-func (r *Resolver) Installed(ctx context.Context) ([]domain.AppIdentity, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+// Discover checks normal install locations first, then Spotlight for custom locations.
+func (r *Resolver) Discover(ctx context.Context) (domain.AppIdentity, error) {
+	candidates := []string{"/Applications/Codex.app", "/Applications/ChatGPT.app"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "Applications/Codex.app"), filepath.Join(home, "Applications/ChatGPT.app"))
 	}
-	roots := []string{"/Applications", "/System/Applications", "/System/Library/CoreServices"}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		roots = append(roots, filepath.Join(home, "Applications"))
-	}
-	seen := make(map[string]struct{})
-	result := make([]domain.AppIdentity, 0)
-	for _, root := range roots {
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("读取应用目录 %s: %w", root, err)
+	for _, path := range candidates {
+		if err := ctx.Err(); err != nil {
+			return domain.AppIdentity{}, err
 		}
-		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if !entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".app") {
-				continue
-			}
-			identity, err := r.resolveBundle(ctx, filepath.Join(root, entry.Name()))
-			if err != nil {
-				continue
-			}
-			key := strings.ToLower(identity.AUMID)
-			if key == "" {
-				key = strings.ToLower(identity.Executable)
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			result = append(result, identity)
+		if identity, err := r.resolveBundle(ctx, path); err == nil && native.IsCodex(identity) {
+			return identity, nil
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool {
-		// Keep the supported first-party app easy to find in the picker.
-		ci, cj := strings.EqualFold(result[i].PackageName, "com.openai.codex"), strings.EqualFold(result[j].PackageName, "com.openai.codex")
-		if ci != cj {
-			return ci
+	output, err := exec.CommandContext(ctx, "/usr/bin/mdfind", "kMDItemCFBundleIdentifier == 'com.openai.codex'").Output()
+	if err != nil && ctx.Err() != nil {
+		return domain.AppIdentity{}, ctx.Err()
+	}
+	for _, path := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if identity, err := r.resolveBundle(ctx, path); err == nil && native.IsCodex(identity) {
+			return identity, nil
 		}
-		return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name)
-	})
-	return result, nil
+	}
+	return domain.AppIdentity{}, application.ErrNotFound
 }
 
 func (r *Resolver) resolveBundle(ctx context.Context, bundle string) (domain.AppIdentity, error) {

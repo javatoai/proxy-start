@@ -1,9 +1,8 @@
-// Package storage persists non-secret application settings as versioned JSON.
-// Credentials are referenced by ID and are intentionally not part of this
-// file; callers should keep their values in the CredentialStore.
+// Package storage persists the small v2 configuration, preserving v1 originals.
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,157 +11,169 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
-	"proxy-start/internal/application"
 	"proxy-start/internal/domain"
 )
 
-// Store is an atomic JSON-backed settings store.
 type Store struct {
-	path string
+	path       string
+	mu         sync.Mutex
+	legacy     []byte
+	createTemp func(string, string) (*os.File, error)
 }
 
-// New creates a settings store for path. The file is not created until Save.
-func New(path string) application.SettingsStore {
-	return &Store{path: path}
-}
+func New(path string) *Store { return &Store{path: path} }
 
-// Load reads and validates settings. A missing file returns the domain's safe
-// defaults and does not create or mutate the file system. Corrupt data is
-// returned as an error and is never silently replaced.
-func (s *Store) Load(ctx context.Context) (domain.Settings, error) {
-	if ctx == nil {
-		ctx = context.Background()
+func (s *Store) temporary(dir, pattern string) (*os.File, error) {
+	if s.createTemp != nil {
+		return s.createTemp(dir, pattern)
 	}
+	return os.CreateTemp(dir, pattern)
+}
+
+func (s *Store) Load(ctx context.Context) (domain.Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return domain.Settings{}, err
 	}
 	if strings.TrimSpace(s.path) == "" {
-		return domain.Settings{}, errors.New("settings path is empty")
+		return domain.Settings{}, errors.New("配置路径为空")
 	}
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return domain.DefaultSettings(), nil
 	}
 	if err != nil {
-		return domain.Settings{}, fmt.Errorf("read settings: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
 		return domain.Settings{}, err
 	}
-	var settings domain.Settings
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&settings); err != nil {
-		return domain.Settings{}, fmt.Errorf("decode settings: %w", err)
+	var header struct{ Version int }
+	if err := json.Unmarshal(data, &header); err != nil {
+		return domain.Settings{}, fmt.Errorf("配置 JSON 无效：%w", err)
 	}
-	// Reject trailing JSON values so a partially corrupted file cannot appear
-	// valid just because its first object decoded successfully.
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if header.Version == 1 {
+		settings, err := migrate(data)
 		if err == nil {
-			return domain.Settings{}, errors.New("decode settings: trailing data")
+			s.legacy = append([]byte(nil), data...)
 		}
-		return domain.Settings{}, fmt.Errorf("decode settings trailing data: %w", err)
+		return settings, err
 	}
-	if err := validate(settings); err != nil {
+	var decoded struct {
+		Version   int    `json:"version"`
+		ProxyPort int    `json:"proxyPort"`
+		Theme     string `json:"theme,omitempty"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
 		return domain.Settings{}, err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return domain.Settings{}, errors.New("配置含多余 JSON 内容")
+	}
+	settings := domain.Settings{Version: decoded.Version, ProxyPort: decoded.ProxyPort}
+	return settings, validate(settings)
+}
+
+func migrate(data []byte) (domain.Settings, error) {
+	var old struct {
+		DefaultProxyID string
+		Theme          string
+		Profiles       []struct {
+			ID, Protocol, Host, Username, CredentialRef string
+			Port                                        int
+		}
+	}
+	if err := json.Unmarshal(data, &old); err != nil {
+		return domain.Settings{}, err
+	}
+	settings := domain.DefaultSettings()
+	for _, profile := range old.Profiles {
+		if profile.ID == old.DefaultProxyID && (profile.Protocol == "http" || profile.Protocol == "auto") &&
+			(profile.Host == "127.0.0.1" || strings.EqualFold(profile.Host, "localhost")) &&
+			profile.Username == "" && profile.CredentialRef == "" && domain.ValidatePort(profile.Port) == nil {
+			settings.ProxyPort = profile.Port
+			break
+		}
 	}
 	return settings, nil
 }
 
-// Save validates settings, writes them to a sibling temporary file, flushes
-// the bytes, and replaces the destination with a single rename. A cancelled
-// operation leaves the previous file untouched and removes its temporary file.
 func (s *Store) Save(ctx context.Context, settings domain.Settings) error {
-	if ctx == nil {
-		ctx = context.Background()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := validate(settings); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(s.path) == "" {
-		return errors.New("settings path is empty")
+		return errors.New("配置路径为空")
 	}
-	if err := validate(settings); err != nil {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
+	}
+	if s.legacy != nil {
+		original, err := os.ReadFile(s.path)
+		if err != nil {
+			return fmt.Errorf("读取待备份旧配置：%w", err)
+		}
+		if !bytes.Equal(original, s.legacy) {
+			return errors.New("旧配置已被其它程序修改，请重新打开启动器")
+		}
+		backup, err := s.temporary(dir, "settings.v1-backup-*.json")
+		if err != nil {
+			return fmt.Errorf("备份旧配置失败：%w", err)
+		}
+		if err = writeAndSync(backup, original); err != nil {
+			_ = os.Remove(backup.Name())
+			return fmt.Errorf("备份旧配置失败：%w", err)
+		}
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode settings: %w", err)
-	}
-	data = append(data, '\n')
-	if err := ctx.Err(); err != nil {
 		return err
 	}
-	directory := filepath.Dir(s.path)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return fmt.Errorf("create settings directory: %w", err)
-	}
-	temporary, err := os.CreateTemp(directory, ".proxy-start-settings-*.tmp")
+	temp, err := s.temporary(dir, ".proxy-start-settings-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create settings temporary file: %w", err)
-	}
-	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write settings temporary file: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		_ = temporary.Close()
 		return err
 	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("flush settings temporary file: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close settings temporary file: %w", err)
+	defer os.Remove(temp.Name())
+	if err := writeAndSync(temp, append(data, '\n')); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryName, s.path); err != nil {
-		return fmt.Errorf("replace settings file: %w", err)
+	if err := os.Rename(temp.Name(), s.path); err != nil {
+		return err
 	}
+	s.legacy = nil
 	return nil
 }
 
+func writeAndSync(file *os.File, data []byte) error {
+	_, err := file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
 func validate(settings domain.Settings) error {
-	if settings.Version != 1 {
-		return fmt.Errorf("unsupported settings version %d", settings.Version)
+	if settings.Version != 2 {
+		return fmt.Errorf("不支持的配置版本 %d", settings.Version)
 	}
-	profileIDs := make(map[string]struct{}, len(settings.Profiles))
-	for _, profile := range settings.Profiles {
-		if strings.TrimSpace(profile.ID) == "" {
-			return errors.New("proxy profile ID is empty")
-		}
-		if _, exists := profileIDs[profile.ID]; exists {
-			return fmt.Errorf("duplicate proxy profile ID %q", profile.ID)
-		}
-		profileIDs[profile.ID] = struct{}{}
-		if err := profile.Validate(); err != nil {
-			return fmt.Errorf("proxy profile %q is invalid: %w", profile.ID, err)
-		}
+	if err := domain.ValidatePort(settings.ProxyPort); err != nil {
+		return err
 	}
-	if settings.DefaultProxyID != "" {
-		if _, exists := profileIDs[settings.DefaultProxyID]; !exists {
-			return fmt.Errorf("default proxy profile %q does not exist", settings.DefaultProxyID)
-		}
-	}
-	appIDs := make(map[string]struct{}, len(settings.Apps))
-	for _, app := range settings.Apps {
-		if strings.TrimSpace(app.ID) == "" {
-			return errors.New("application ID is empty")
-		}
-		if _, exists := appIDs[app.ID]; exists {
-			return fmt.Errorf("duplicate application ID %q", app.ID)
-		}
-		appIDs[app.ID] = struct{}{}
-		if strings.TrimSpace(app.Identity.Executable) == "" {
-			return fmt.Errorf("application %q executable is empty", app.ID)
-		}
-	}
+
 	return nil
 }

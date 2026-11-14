@@ -1,90 +1,16 @@
-# 发布说明
+# 发布验证
 
-本项目的发布目标是 Windows x64 与 macOS arm64 / amd64。发布流程参考 `javatoai/silverwing` 的原生构建流水线：标签触发前先检查版本，分别构建平台产物，收集合并后的包并校验清单，再创建 GitHub Release。工作流负责可重复构建和资产整理，不替代目标机器上的功能验收。
+版本统一从根目录 VERSION 读取。当前版本为 0.2.0；Git 标签必须为 v0.2.0。
 
-## 版本与标签
+发布页只上传两个资产：
 
-0.1.13 的发布标签应为 `v0.1.13`，并与根目录 `VERSION`、产品入口和 macOS `Info.plist` 中的版本保持一致。Go 程序直接嵌入 `VERSION`，无需分别维护界面与诊断版本。新版本发布前应检查：
+- ProxyStart-windows-amd64.exe：单个 x64 GUI 程序，图标和第三方许可内嵌，无外置资源、脚本、配置或安装器。
+- ProxyStart-macos-universal.dmg：包含 Apple Silicon / Intel 通用应用和 Applications 拖入入口，不放文档或开发文件。
 
-- 根目录 `VERSION` 与发布标签；
-- `scripts/pack.ps1` 与 `scripts/pack-macos.ps1` 的输出目录及默认版本；
-- README、`PRODUCT.md`、`docs/MACOS.md` 和本文件中的发布目标；
-- 发布包内的 `checksums.sha256` 与外层清单。
+Windows 使用 scripts/pack.ps1，macOS 使用 scripts/pack-macos.sh（或 PowerShell 包装入口）。DMG 必须在 macOS 使用 lipo、codesign、hdiutil 构建；本地临时签名不等于 Developer ID 签名或公证。
 
-配置文件格式版本独立于客户端版本。发布构建不得覆盖用户的 `%APPDATA%\Proxy Start` 或 macOS `~/Library/Application Support/Proxy Start` 配置。
+CI 先运行 Windows / macOS 原生测试、静态检查和平台集成用例，再构建。Windows 核对 GUI PE、版本与默认端口；macOS 验证双架构、应用版本、签名、DMG 完整性及只读挂载后的精确文件集合，并从挂载卷执行 --check。检查第三方许可可通过 --licenses。
 
-## GitHub Actions 约定
+scripts/verify-release-assets.py 验证两文件集合、PE GUI 子系统和 DMG UDIF 尾标识，将 SHA-256 输出到 CI 日志，不向分发目录写入附加校验文件。Release 先创建为草稿，上传后通过 scripts/verify-github-release.py 逐文件核对远端大小和摘要，全部通过才公开。GitHub 自动提供的 Source code 下载入口不属于手工上传的两个安装文件。
 
-项目使用 `.github/workflows/release.yml`，结构参考 Silverwing 当前的 `Native builds and releases`：
-
-1. `version` 作业在 Ubuntu runner 检查当前产品版本；只有 `refs/tags/v<版本>` 才进入发布分支。
-2. `build` 作业使用 Windows runner 构建 Windows x64；使用 macOS runner 构建 Apple Silicon 与 Intel `.app`。每个平台先运行测试，再上传对应压缩包和清单。
-3. `release` 作业仅在目标仓库的版本标签上运行，下载本次构建产物，检查文件集合、架构、ZIP 权限和 SHA-256 后创建 GitHub Release。
-4. 失败或普通分支构建只保留 CI artifact，不发布正式 Release。发布 job 才拥有 `contents: write` 权限。
-
-标签发布前检查工作流条件、仓库名称、默认分支和 secrets；不要把本地 GitHub CLI 登录状态或个人凭据写入仓库。Release 资产应包含平台包、对应校验文件以及与源码版本一致的文档。
-
-## Windows 构建
-
-在 Windows PowerShell 中执行：
-
-```powershell
-.\scripts\pack.ps1 `
-  -OutputDir dist\release-0.1.13 `
-  -Proxy http://127.0.0.1:7897
-```
-
-脚本会运行 Go 测试、构建 GUI 客户端和管理员辅助进程、校验 helper 摘要、获取固定版本的 ProxiFyre 安装包，并生成：
-
-- `ProxyStart-windows-amd64.zip`：可运行客户端、安装/卸载脚本、组件安装包和文档；
-- `ProxyStart-source.zip`：不含 `.tools`、缓存和既有发布目录的源码包；
-- `checksums.sha256`：两个 ZIP 的 SHA-256。
-
-本地发布目录已存在时，必须显式使用 `-Force`。脚本不会运行 ProxiFyre 安装器，不会安装 NDISRD/Windows Packet Filter 驱动，也不会修改系统代理。
-
-## macOS 构建
-
-Windows 上可以交叉编译两个架构：
-
-```powershell
-.\scripts\pack-macos.ps1 `
-  -OutputDir dist\release-0.1.13-macos `
-  -Version 0.1.13
-```
-
-产物为 `ProxyStart-macos-arm64.zip` 和 `ProxyStart-macos-amd64.zip`。脚本检查 Mach-O 架构、`MH_EXECUTE` 文件类型、`.app` 目录布局、ZIP 内 Unix 权限和 SHA-256。它不完成 Developer ID 签名或 Apple 公证。
-
-macOS 当前只实现 Codex 原生代理路径和通过 Terminal 注入代理环境变量的控制台；按程序强制代理尚未实现。Apple Silicon / Intel 的源码与交叉编译包存在，但没有 Mac 实机 GUI、Codex 网络、控制台、Keychain、签名或公证验收。CI 在 macOS runner 上通过单元测试，也不能作为这些实机结论的替代。
-
-正式分发前应在对应 Mac 上重新打包并完成自己的签名、公证和首次启动检查：
-
-```sh
-codesign --deep --force --options runtime --sign "Developer ID Application: YOUR NAME (TEAMID)" "Proxy Start.app"
-codesign --verify --deep --strict --verbose=2 "Proxy Start.app"
-ditto -c -k --keepParent "Proxy Start.app" ProxyStart-macos-signed.zip
-xcrun notarytool submit ProxyStart-macos-signed.zip --keychain-profile YOUR_PROFILE --wait
-xcrun stapler staple "Proxy Start.app"
-```
-
-证书、私钥和 `notarytool` profile 不进入仓库或 CI 日志。
-
-## 0.1.13 变更说明
-
-- 新增 Windows Store Claude Desktop 原生代理启动，从已安装应用列表添加后可直接启动或重启，支持无认证 HTTP 和域名绕过，无需 TUN 或强制代理组件。
-- Claude 使用当前 Store 包身份解析安装路径，再直接运行可执行文件并传递代理环境，避免包激活丢失启动配置。
-- 更新 Windows 原生能力说明并补齐身份、参数、环境和策略回归测试；本机已验证 Claude 实际启动及到代理端口的 TCP 连接。
-- Claude 对话请求、Codex 真实业务流量与 Mac 实机 GUI / 网络仍待验收。
-
-本节对应 0.1.13 的变更，实际构建与发布状态以 GitHub Actions 和 Release 页面为准。0.1.12 及更早版本的变更说明保留在 [更新日志](../CHANGELOG.md) 和历史验证记录中。
-
-## 发布前验证
-
-发布构建通过后，仍需单独记录以下结果：
-
-- `go test ./...` 与 `go vet ./...`；
-- Windows 包的 `--check`、配置哈希不变和 `--open-proxy-console` 环境注入；
-- 使用新 PowerShell 的 `curl.exe` 做真实代理请求检查，并明确区分“环境已注入”和“目标软件流量已验证”；
-- ProxiFyre 安装、服务/驱动状态与至少一个未读取代理环境变量的目标程序的真实流量；
-- Mac 实机的 `.app` 启动、Codex 原生代理、Keychain、Terminal 控制台、签名、公证和退出行为。
-
-上述项目的结果写入 [验证记录](VERIFICATION.md)。没有实机证据时，Release 说明应保留“未验收”字样，不能把交叉编译或 CI 通过写成 macOS 已完全支持。
+发布标签固定到已提交、已推送的源码。真实 Codex 网络流量与 Mac GUI / Terminal 验收另行记录；不以 CI 通过替代用户实机验收。

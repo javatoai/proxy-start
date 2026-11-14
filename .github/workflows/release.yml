@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build (for example v0.1.13)
+        description: Existing version tag to build (for example v0.2.0)
         required: true
-        default: v0.1.13
+        default: v0.2.0
         type: string
 
 permissions:
@@ -24,7 +24,7 @@ concurrency:
 
 env:
   # go1.27.2 is the current stable patch used by the checked-in Windows
-  # helper build and was verified against go.dev/dl on 2026-10-18.
+  # client build and was verified against go.dev/dl on 2026-10-18.
   GO_VERSION: '1.27.2'
   GOTOOLCHAIN: local
   CGO_ENABLED: '0'
@@ -139,19 +139,17 @@ jobs:
             exit 1
           }
 
-      - name: Run Windows tests and console environment check
+      - name: Run Windows tests and console checks
         if: matrix.platform == 'windows-x64'
         shell: pwsh
+        env:
+          PROXY_START_WINDOWS_INTEGRATION: '1'
         run: |
           $ErrorActionPreference = 'Stop'
-          go test ./...
+          go test ./... -count=1
           if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
           go vet ./...
           if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
-          $env:PROXY_START_CONSOLE_REAL = '1'
-          $env:PROXY_START_CONSOLE_BYPASS_REAL = '1'
-          go test ./internal/platform/console -run '^TestWindows(ChildEnvironment(Bypass)?Integration|ConsoleProxyBypassRoutingIntegration)$' -count=1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows console environment or bypass routing test failed' }
 
       - name: Verify Windows icon resources and PE metadata
         if: matrix.platform == 'windows-x64'
@@ -170,7 +168,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build Windows portable and source packages
+      - name: Build Windows single executable
         if: matrix.platform == 'windows-x64'
         shell: pwsh
         env:
@@ -181,11 +179,9 @@ jobs:
           ./scripts/pack.ps1 -OutputDir $output -GoExe go -SkipTests
           $staging = 'dist/windows-x64'
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
-          Get-ChildItem -LiteralPath $output -Filter '*.zip' -File | Copy-Item -Destination $staging
-          Copy-Item -LiteralPath (Join-Path $output 'checksums.sha256') -Destination (Join-Path $staging 'ProxyStart-windows.checksums.sha256')
-          $assets = @(Get-ChildItem -LiteralPath $staging -File)
-          if ($assets.Count -ne 3) { throw "Expected three Windows release assets, got $($assets.Count)" }
-          $checkBinary = Join-Path $output 'ProxyStart-windows-amd64/proxy-start.exe'
+          $checkBinary = Join-Path $output 'ProxyStart-windows-amd64.exe'
+          Copy-Item -LiteralPath $checkBinary -Destination $staging
+          if (@(Get-ChildItem -LiteralPath $staging -Force).Count -ne 1) { throw 'Windows release must contain one EXE' }
           $checkConfig = Join-Path $env:RUNNER_TEMP 'proxy-start-check-settings.json'
           $checkStdout = Join-Path $env:RUNNER_TEMP 'proxy-start-check.stdout.json'
           $checkStderr = Join-Path $env:RUNNER_TEMP 'proxy-start-check.stderr.txt'
@@ -194,39 +190,19 @@ jobs:
           if ($checkProcess.ExitCode -ne 0) { throw ('Windows --check failed: ' + (Get-Content -LiteralPath $checkStderr -Raw)) }
           $checkOutput = Get-Content -LiteralPath $checkStdout -Raw
           $check = $checkOutput | ConvertFrom-Json
+          if ($check.ProxyPort -ne 7897) { throw "Unexpected shared proxy port" }
           if ($check.Version -ne $env:RELEASE_VERSION) { throw "Windows --check version $($check.Version) does not match $env:RELEASE_VERSION" }
 
-      - name: Build macOS arm64 and amd64 app packages
+      - name: Build and mount-check macOS universal DMG
         if: matrix.platform == 'macos'
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          SKIP_TESTS: '1'
         run: |
           set -euo pipefail
-          output="dist/release-${RELEASE_VERSION}-macos"
-          command -v pwsh >/dev/null 2>&1
-          pwsh -NoLogo -NoProfile -File scripts/pack-macos.ps1 -OutputDir "$output" -Version "$RELEASE_VERSION" -GoExe "$(command -v go)" -SkipTests
-          staging='dist/macos'
-          mkdir -p "$staging"
-          find "$output" -maxdepth 1 -type f -name '*.zip' -exec cp {} "$staging/" \;
-          cp "$output/checksums.sha256" "$staging/ProxyStart-macos.checksums.sha256"
-          count="$(find "$staging" -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          test "$count" -eq 3
-          native_arch="$(go env GOARCH)"
-          app="$output/ProxyStart-macos-${native_arch}/Proxy Start.app"
-          plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
-          test "$plist_version" = "$RELEASE_VERSION"
-          "$app/Contents/MacOS/proxy-start" --check --config "$RUNNER_TEMP/proxy-start-smoke-settings.json" >/tmp/proxy-start-check.txt
-          test -s /tmp/proxy-start-check.txt
-          python3 - "$RELEASE_VERSION" /tmp/proxy-start-check.txt <<'PY'
-          import json
-          import pathlib
-          import sys
-          expected = sys.argv[1]
-          payload = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'))
-          if payload.get('Version') != expected:
-              raise SystemExit(f"--check version {payload.get('Version')!r} does not match {expected!r}")
-          PY
+          bash scripts/pack-macos.sh dist/macos "$RELEASE_VERSION"
+          test "$(find dist/macos -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" -eq 1
 
       - name: Upload platform packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -290,12 +266,12 @@ jobs:
           if not changes:
               raise SystemExit(f'Empty changelog entry for {tag}')
           notes = changes + '\n\n' + '\n'.join([
-              '## 验证与平台范围', '',
-              f'- Windows 控制台环境与本地 HTTP/SOCKS5 域名分流测试在 CI 执行；历史 HTTPS 代理验证见[验证记录](https://github.com/{repo}/blob/{tag}/docs/CONSOLE-VERIFICATION.md)。真实外网测试保留为显式启用。',
-              f'- Windows / macOS 原生测试、构建和版本诊断：[本次 CI]({run})。',
-              '- macOS 提供 Apple Silicon / Intel 包、Codex 原生 HTTP 代理和代理终端；按程序强制代理仅支持 Windows。',
-              '- macOS 未完成 Developer ID 签名或公证，GUI、Keychain、Terminal 和真实 Codex 联网仍需 Mac 实机验收。',
-              '- macOS CI 使用临时配置执行 `--check`，并验证进程启停与回收；不安装驱动或启动目标应用。', '',
+              '## 下载与验证', '',
+              '- Windows：直接下载 EXE，无需解压，没有外置资源、脚本或配置文件。',
+              '- macOS：通用 DMG 同时支持 Apple Silicon 和 Intel；打开后将 Proxy Start 拖入 Applications。',
+              '- 第三方许可已内嵌，可运行程序的 `--licenses` 参数查看。',
+              f'- Windows / macOS 原生测试、DMG 挂载检查及远端文件摘要校验：[本次 CI]({run})。',
+              '- macOS 使用本地临时签名，尚未完成 Developer ID 签名或公证；真实 Codex、GUI 和 Terminal 仍需 Mac 实机验收。', '',
           ])
           Path(os.environ['RUNNER_TEMP'], 'proxy-start-release-notes.md').write_text(notes, encoding='utf-8')
           PY

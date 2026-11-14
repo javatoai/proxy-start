@@ -1,6 +1,5 @@
 ﻿[CmdletBinding()]
 param(
-    [switch]$Helper,
     [switch]$Build,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Arguments
@@ -11,7 +10,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $outputDir = Join-Path $projectRoot "dist"
-$name = if ($Helper) { "proxy-start-helper.exe" } else { "proxy-start.exe" }
+$name = "proxy-start.exe"
 $executable = Join-Path $outputDir $name
 
 if ($Build -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) {

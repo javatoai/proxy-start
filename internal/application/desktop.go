@@ -2,252 +2,329 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"proxy-start/internal/domain"
+	"net"
+	"strconv"
 	"sync"
 	"time"
+
+	"proxy-start/internal/adapters/native"
+	"proxy-start/internal/domain"
 )
 
+var ErrAlreadyRunning = errors.New("Codex 已启动，当前进程保持原样")
+var ErrNotFound = errors.New("未找到 Codex 桌面程序，请安装后重新扫描")
+
 type Dependencies struct {
-	Store       SettingsStore
-	Credentials CredentialStore
-	Resolver    AppResolver
-	Processes   ProcessController
-	Probe       ProxyProbe
-	Backend     ForcedBackend
-	Adapters    []NativeAdapter
-	Icons       AppIconProvider
-	Platform    PlatformCapabilities
-	Console     ConsoleLauncher
+	Store     SettingsStore
+	Resolver  CodexResolver
+	Processes ProcessController
+	Console   ConsoleLauncher
+	Platform  PlatformCapabilities
+	CheckPort func(context.Context, int) error
 }
-
 type Snapshot struct {
-	Settings domain.Settings
-	Runtimes map[string]domain.AppRuntime
-	Backend  domain.BackendStatus
-	Platform PlatformCapabilities
+	Settings     domain.Settings
+	Identity     domain.AppIdentity
+	Scanning     bool
+	ScanError    string
+	ScanNotFound bool
+	State        string
+	Proxy        domain.ProxyObservation
+	RuntimeError string
+	Platform     PlatformCapabilities
 }
 
-// Desktop is a thin UI facade; use cases and resource ownership live separately.
+// Desktop observes Codex and changes its lifecycle only on explicit actions.
 type Desktop struct {
-	repository *settingsRepository
-	profiles   *profileService
-	catalog    *catalogService
-	launcher   *launchService
-	backend    ForcedBackend
-	cancel     context.CancelFunc
-	done       chan struct{}
-	statusMu   sync.RWMutex
-	status     domain.BackendStatus
-	icons      AppIconProvider
-	platform   PlatformCapabilities
-	console    ConsoleLauncher
+	deps      Dependencies
+	mu        sync.RWMutex
+	operation sync.Mutex
+	snapshot  Snapshot
+	cancel    context.CancelFunc
+	ctx       context.Context
+	done      chan struct{}
+	ready     chan struct{}
+	cache     map[domain.ProcessHandle]domain.ProcessInfo
 }
 
-func NewDesktop(ctx context.Context, d Dependencies) (*Desktop, error) {
-	if d.Store == nil || d.Credentials == nil || d.Resolver == nil || d.Processes == nil || d.Probe == nil || d.Backend == nil {
-		return nil, fmt.Errorf("应用依赖未完整配置")
+func NewDesktop(ctx context.Context, deps Dependencies) (*Desktop, error) {
+	if deps.Store == nil || deps.Resolver == nil || deps.Processes == nil || deps.Console == nil {
+		return nil, errors.New("应用依赖未完整配置")
 	}
-	repository, err := newSettingsRepository(ctx, d.Store)
+	settings, err := deps.Store.Load(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("读取配置失败：%w", err)
 	}
-	profiles := &profileService{repository: repository, credentials: d.Credentials, probe: d.Probe}
-	launcher := &launchService{repository: repository, profiles: profiles, resolver: d.Resolver, processes: d.Processes, selector: NewStrategySelector(d.Adapters...), forced: newForcedRuntime(d.Backend), runtimes: map[string]domain.AppRuntime{}, locks: map[string]*sync.Mutex{}}
+	if deps.CheckPort == nil {
+		deps.CheckPort = CheckLocalPort
+	}
 	monitor, cancel := context.WithCancel(ctx)
-	desktop := &Desktop{repository: repository, profiles: profiles, catalog: &catalogService{repository: repository, resolver: d.Resolver}, launcher: launcher, backend: d.Backend, cancel: cancel, done: make(chan struct{}), icons: d.Icons, platform: clonePlatform(d.Platform), console: d.Console}
-	initialCtx, initialCancel := context.WithTimeout(ctx, 5*time.Second)
-	launcher.discoverConfigured(initialCtx)
-	initialCancel()
-	go desktop.monitor(monitor)
-	return desktop, nil
+	d := &Desktop{deps: deps, ctx: monitor, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), cache: make(map[domain.ProcessHandle]domain.ProcessInfo),
+		snapshot: Snapshot{Settings: settings, Scanning: true, State: "unknown", Platform: deps.Platform}}
+	go d.monitor()
+	return d, nil
 }
 
-func (d *Desktop) monitor(ctx context.Context) {
-	defer close(d.done)
-	tick := time.NewTicker(3 * time.Second)
-	defer tick.Stop()
-	for {
-		status := d.backend.Status(ctx)
-		d.statusMu.Lock()
-		d.status = status
-		d.statusMu.Unlock()
-		pollCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		d.launcher.poll(pollCtx)
-		cancel()
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
+func CheckLocalPort(ctx context.Context, port int) error {
+	if err := domain.ValidatePort(port); err != nil {
+		return err
 	}
+	connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return fmt.Errorf("无法连接本机代理端口 %d，请检查 Clash 是否运行及端口设置", port)
+	}
+	return connection.Close()
 }
 
 func (d *Desktop) Snapshot() Snapshot {
-	d.statusMu.RLock()
-	status := d.status
-	d.statusMu.RUnlock()
-	return Snapshot{Settings: d.repository.snapshot(), Runtimes: d.launcher.snapshot(), Backend: status, Platform: clonePlatform(d.platform)}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	s := d.snapshot
+	s.Identity.Arguments = append([]string(nil), s.Identity.Arguments...)
+	return s
 }
-func (d *Desktop) AddApp(ctx context.Context, input string) (domain.AppEntry, error) {
-	entry, err := d.catalog.add(ctx, input)
-	if err != nil {
-		return domain.AppEntry{}, err
+
+func (d *Desktop) monitor() {
+	defer close(d.done)
+	ctx, cancel := context.WithTimeout(d.ctx, 15*time.Second)
+	_ = d.ScanCodex(ctx)
+	cancel()
+	close(d.ready)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
+			d.operation.Lock()
+			if ctx.Err() == nil {
+				_ = d.refresh(ctx, d.Snapshot().Identity)
+			}
+			d.operation.Unlock()
+			cancel()
+		}
 	}
-	d.launcher.discoverApp(ctx, entry.ID)
-	return entry, nil
 }
-func (d *Desktop) SaveApp(ctx context.Context, entry domain.AppEntry) error {
-	if err := d.catalog.save(ctx, entry); err != nil {
+
+func (d *Desktop) operationContext(ctx context.Context) (context.Context, func()) {
+	child, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(d.ctx, cancel)
+	if d.ctx.Err() != nil {
+		cancel()
+	}
+	return child, func() { stop(); cancel() }
+}
+
+func (d *Desktop) ScanCodex(ctx context.Context) error {
+	d.operation.Lock()
+	defer d.operation.Unlock()
+	ctx, cancel := d.operationContext(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	d.launcher.discoverApp(ctx, entry.ID)
-	return nil
-}
-func (d *Desktop) RemoveApp(ctx context.Context, id string) error {
-	return d.launcher.withOperation(func() error {
-		lock := d.launcher.appLock(id)
-		lock.Lock()
-		defer lock.Unlock()
-		if state := d.launcher.snapshot()[id]; state.State == domain.StateRunning || state.State == domain.StateStarting {
-			return fmt.Errorf("请先结束程序，再移除启动项")
+	d.mu.Lock()
+	d.snapshot.Scanning = true
+	d.mu.Unlock()
+	identity, err := d.deps.Resolver.Discover(ctx)
+	if err == nil && !native.IsCodex(identity) {
+		err = ErrNotFound
+	}
+	d.mu.Lock()
+	d.snapshot.Scanning, d.snapshot.ScanError = false, ""
+	d.snapshot.ScanNotFound = errors.Is(err, ErrNotFound)
+	if err != nil {
+		d.snapshot.ScanError = err.Error()
+		if d.snapshot.Identity.Executable == "" {
+			d.snapshot.State = "unknown"
 		}
-		return d.catalog.remove(ctx, id)
-	})
-}
-func (d *Desktop) SaveProfile(ctx context.Context, p domain.ProxyProfile, password string) error {
-	return d.profiles.save(ctx, p, password)
+	} else {
+		d.snapshot.Identity = identity
+	}
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return d.refresh(ctx, identity)
 }
 
-// SaveProfileResult is the ID-preserving variant used by modal editors. It
-// returns the exact persisted profile, including a generated ID for new rows.
-func (d *Desktop) SaveProfileResult(ctx context.Context, p domain.ProxyProfile, password string) (domain.ProxyProfile, error) {
-	return d.profiles.saveResult(ctx, p, password)
-}
-func (d *Desktop) DeleteProfile(ctx context.Context, id string) error {
-	return d.profiles.delete(ctx, id)
-}
-func (d *Desktop) ClearCredential(ctx context.Context, id string) error {
-	return d.profiles.clearCredential(ctx, id)
-}
-func (d *Desktop) SetDefaultProxy(ctx context.Context, id string) error {
-	return d.repository.change(ctx, func(s *domain.Settings) error {
-		for _, profile := range s.Profiles {
-			if profile.ID == id {
-				s.DefaultProxyID = id
-				return nil
+// refresh is serialized with launches. Failed observations disable launching;
+// they must never turn an inaccessible running process into a stopped one.
+func (d *Desktop) refresh(ctx context.Context, identity domain.AppIdentity) error {
+	if identity.Executable == "" {
+		return nil
+	}
+	handles, err := d.deps.Processes.Find(ctx, identity)
+	if err != nil {
+		d.mu.Lock()
+		d.snapshot.State, d.snapshot.RuntimeError = "unknown", "无法读取 Codex 运行状态，请重新扫描"
+		d.snapshot.Proxy = domain.ProxyObservation{Kind: "unknown"}
+		d.mu.Unlock()
+		return err
+	}
+	if len(handles) == 0 {
+		d.cache = make(map[domain.ProcessHandle]domain.ProcessInfo)
+		d.mu.Lock()
+		d.snapshot.State, d.snapshot.RuntimeError, d.snapshot.Proxy = "stopped", "", domain.ProxyObservation{}
+		d.mu.Unlock()
+		return nil
+	}
+	current := make(map[domain.ProcessHandle]domain.ProcessInfo)
+	pids := make(map[int]bool)
+	for _, handle := range handles {
+		pids[handle.PID] = true
+	}
+	var roots []domain.ProxyObservation
+	for _, handle := range handles {
+		if pids[handle.ParentPID] {
+			continue
+		}
+		info, cached := d.cache[handle]
+		if !cached {
+			var inspectErr error
+			info, inspectErr = d.deps.Processes.Inspect(ctx, handle)
+			if inspectErr != nil {
+				info.Readable = false
 			}
 		}
-		return ErrNotFound
-	})
-}
-func (d *Desktop) SetTheme(ctx context.Context, theme string) error {
-	if theme != "system" && theme != "light" && theme != "dark" {
-		return fmt.Errorf("不支持的主题")
+		if info.Readable {
+			current[handle] = info
+		}
+		if pids[info.ParentPID] || IsChromiumChild(info.Arguments) {
+			continue
+		}
+		roots = append(roots, ObserveProxy(info))
 	}
-	return d.repository.change(ctx, func(s *domain.Settings) error { s.Theme = theme; return nil })
+	d.cache = current
+	d.mu.Lock()
+	d.snapshot.State, d.snapshot.RuntimeError, d.snapshot.Proxy = "running", "", CombineProxyObservations(roots)
+	d.mu.Unlock()
+	return nil
 }
 
-// SetHideSystemApps persists the installed-app catalog filter. The persisted
-// setting is phrased positively (ShowSystemApps) so older JSON files can
-// safely omit it and retain the default of hiding system entries.
-func (d *Desktop) SetHideSystemApps(ctx context.Context, hide bool) error {
-	return d.repository.change(ctx, func(s *domain.Settings) error {
-		s.ShowSystemApps = !hide
-		return nil
-	})
+func (d *Desktop) SaveProxyPort(ctx context.Context, port int) error {
+	if err := domain.ValidatePort(port); err != nil {
+		return err
+	}
+	return d.save(ctx, func(settings *domain.Settings) { settings.ProxyPort = port })
 }
-func (d *Desktop) TestProfile(ctx context.Context, id string) (domain.ProbeResult, error) {
-	return d.profiles.test(ctx, id)
+func (d *Desktop) save(ctx context.Context, change func(*domain.Settings)) error {
+	d.operation.Lock()
+	defer d.operation.Unlock()
+	ctx, cancel := d.operationContext(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	settings := d.Snapshot().Settings
+	change(&settings)
+	if err := d.deps.Store.Save(ctx, settings); err != nil {
+		return fmt.Errorf("保存配置失败：%w", err)
+	}
+	d.mu.Lock()
+	d.snapshot.Settings = settings
+	d.mu.Unlock()
+	return nil
 }
 
-// OpenProxyConsole opens an independent shell whose proxy variables are
-// limited to that shell and its descendants. Auto protocol detection only
-// accepts verified probe results; an unverified guess is never presented as a
-// successful console launch.
-func (d *Desktop) OpenProxyConsole(ctx context.Context, id string) error {
-	if d.console == nil {
-		return fmt.Errorf("当前平台不支持代理控制台")
+func (d *Desktop) StartCodex(ctx context.Context) error {
+	d.operation.Lock()
+	defer d.operation.Unlock()
+	ctx, cancel := d.operationContext(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	identity, err := d.deps.Resolver.Discover(ctx)
+	if err != nil {
+		return err
+	}
+	if !native.IsCodex(identity) {
+		return ErrNotFound
+	}
+	d.mu.Lock()
+	d.snapshot.Identity = identity
+	d.mu.Unlock()
+	if err := d.refresh(ctx, identity); err != nil {
+		return err
+	}
+	if d.Snapshot().State == "running" {
+		return ErrAlreadyRunning
+	}
+	port := d.Snapshot().Settings.ProxyPort
+	if err := d.deps.CheckPort(ctx, port); err != nil {
+		return err
+	}
+	spec, err := native.PlanCodex(identity, port)
+	if err != nil {
+		return err
+	}
+	if err := d.refresh(ctx, identity); err != nil {
+		return err
+	}
+	if d.Snapshot().State == "running" {
+		return ErrAlreadyRunning
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	profile, err := d.repository.profile(id)
-	if err != nil {
-		return err
-	}
-	resolved, err := d.profiles.resolve(ctx, profile)
-	if err != nil {
-		return err
-	}
-	endpoint := resolved.Endpoint
-	protocol := endpoint.Protocol
-	if protocol == domain.ProtocolAuto {
-		probe, probeErr := d.profiles.probe.Test(ctx, endpoint)
-		if probeErr != nil {
-			return fmt.Errorf("自动检测代理协议失败：%w", probeErr)
-		}
-		switch {
-		case probe.HTTPVerified:
-			protocol = domain.ProtocolHTTP
-		case probe.SOCKS5Verified:
-			protocol = domain.ProtocolSOCKS5
-		default:
-			return fmt.Errorf("未验证出可用的 HTTP 或 SOCKS5 代理")
-		}
-	}
-	environment, unset, err := BuildProxyEnvironment(endpoint, protocol, resolved.Bypass)
-	if err != nil {
-		return err
-	}
-	return d.console.Open(ctx, ConsoleSpec{ProfileName: resolved.Profile.Name, Environment: environment, UnsetEnvironment: unset})
-}
-func (d *Desktop) Start(ctx context.Context, id string) error   { return d.launcher.start(ctx, id) }
-func (d *Desktop) Stop(ctx context.Context, id string) error    { return d.launcher.stop(ctx, id) }
-func (d *Desktop) Restart(ctx context.Context, id string) error { return d.launcher.restart(ctx, id) }
-func (d *Desktop) Installed(ctx context.Context) ([]domain.AppIdentity, error) {
-	installed, err := d.catalog.resolver.Installed(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if d.repository.snapshot().ShowSystemApps {
-		return installed, nil
-	}
-	filtered := make([]domain.AppIdentity, 0, len(installed))
-	for _, identity := range installed {
-		if identity.SystemApp {
-			continue
-		}
-		filtered = append(filtered, identity)
-	}
-	return filtered, nil
+	return d.launchPrepared(ctx, identity, spec)
 }
 
-func (d *Desktop) Icon(ctx context.Context, id string) ([]byte, error) {
-	entry, err := d.repository.app(id)
-	if err != nil {
-		return nil, err
+func (d *Desktop) launchPrepared(ctx context.Context, identity domain.AppIdentity, spec domain.LaunchSpec) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return d.IconForIdentity(ctx, entry.Identity)
+	d.mu.Lock()
+	d.snapshot.State = "starting"
+	d.mu.Unlock()
+	handle, err := d.deps.Processes.Start(ctx, spec)
+	if err != nil {
+		_ = d.refresh(ctx, identity)
+		return err
+	}
+	d.cache[handle] = domain.ProcessInfo{Arguments: spec.Arguments, Readable: true}
+	d.mu.Lock()
+	d.snapshot.State, d.snapshot.RuntimeError = "running", ""
+	d.snapshot.Proxy = ObserveProxy(domain.ProcessInfo{Arguments: spec.Arguments, Readable: true})
+	d.mu.Unlock()
+	return nil
 }
 
-// IconForIdentity returns an application icon without changing the launch
-// catalog. This is used for identities discovered by the installed-app picker
-// before the user chooses to add one. Keeping the provider behind this facade
-// prevents the UI from depending on platform-specific icon APIs.
-func (d *Desktop) IconForIdentity(ctx context.Context, identity domain.AppIdentity) ([]byte, error) {
-	if d.icons == nil {
-		return nil, nil
+func (d *Desktop) OpenProxyConsole(ctx context.Context) error {
+	d.operation.Lock()
+	defer d.operation.Unlock()
+	ctx, cancel := d.operationContext(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return d.icons.Icon(ctx, identity)
+	port := d.Snapshot().Settings.ProxyPort
+	if err := d.deps.CheckPort(ctx, port); err != nil {
+		return err
+	}
+	environment, unset := BuildProxyEnvironment(port)
+	return d.deps.Console.Open(ctx, ConsoleSpec{Environment: environment, UnsetEnvironment: unset})
 }
-func (d *Desktop) InstallBackend(ctx context.Context) error { return d.backend.Install(ctx) }
 func (d *Desktop) Shutdown(ctx context.Context) error {
 	d.cancel()
 	select {
 	case <-d.done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return d.launcher.shutdown(ctx)
+}
+
+func (d *Desktop) WaitReady(ctx context.Context) error {
+	select {
+	case <-d.ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

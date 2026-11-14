@@ -34,3 +34,7 @@ func (*ProcessController) Stop(context.Context, domain.AppIdentity, []domain.Pro
 }
 
 func (*ProcessController) Alive(context.Context, domain.ProcessHandle) bool { return false }
+
+func (*ProcessController) Inspect(context.Context, domain.ProcessHandle) (domain.ProcessInfo, error) {
+	return domain.ProcessInfo{}, unavailable()
+}

@@ -1,31 +1,16 @@
 #!/usr/bin/env python3
-"""Verify the exact package set and the platform hash manifests.
-
-The release workflow downloads artifacts into one directory before creating a
-draft release. Keeping the verification here makes the same check runnable in
-CI and locally without depending on GitHub's release API.
-"""
-
+"""Validate the exact two-file public release; hashes stay in CI logs."""
 from __future__ import annotations
-
 import argparse
 import hashlib
+import json
 import re
-import sys
+import struct
 from pathlib import Path
 
-
-WINDOWS_ASSETS = frozenset(
-    {"ProxyStart-windows-amd64.zip", "ProxyStart-source.zip"}
-)
-MACOS_ASSETS = frozenset(
-    {"ProxyStart-macos-arm64.zip", "ProxyStart-macos-amd64.zip"}
-)
-PLATFORM_MANIFESTS = frozenset(
-    {"ProxyStart-windows.checksums.sha256", "ProxyStart-macos.checksums.sha256"}
-)
-RELEASE_ASSETS = WINDOWS_ASSETS | MACOS_ASSETS | PLATFORM_MANIFESTS
-
+WINDOWS_ASSETS = frozenset({"ProxyStart-windows-amd64.exe"})
+MACOS_ASSETS = frozenset({"ProxyStart-macos-universal.dmg"})
+RELEASE_ASSETS = WINDOWS_ASSETS | MACOS_ASSETS
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -34,101 +19,43 @@ def sha256(path: Path) -> str:
             digest.update(block)
     return digest.hexdigest()
 
-
-def read_manifest(path: Path) -> dict[str, str]:
-    entries: dict[str, str] = {}
-    for line_number, raw in enumerate(path.read_text(encoding="ascii").splitlines(), 1):
-        line = raw.strip()
-        if not line:
-            continue
-        match = re.fullmatch(r"([0-9a-fA-F]{64})  ([^/\\][^/\\]*)", line)
-        if match is None:
-            raise ValueError(f"invalid checksum line {path}:{line_number}")
-        digest, name = match.groups()
-        if name in entries:
-            raise ValueError(f"duplicate checksum entry {name!r} in {path}")
-        entries[name] = digest.lower()
-    return entries
-
-
-def verify_manifest(directory: Path, name: str, expected: set[str]) -> None:
-    manifest = directory / name
-    if not manifest.is_file():
-        raise ValueError(f"missing checksum manifest: {name}")
-    entries = read_manifest(manifest)
-    if set(entries) != expected:
-        raise ValueError(
-            f"{name} contains {sorted(entries)}, expected {sorted(expected)}"
-        )
-    for asset, expected_hash in entries.items():
-        asset_path = directory / asset
-        if not asset_path.is_file():
-            raise ValueError(f"{name} references missing asset: {asset}")
-        actual = sha256(asset_path)
-        if actual != expected_hash:
-            raise ValueError(
-                f"hash mismatch for {asset}: expected {expected_hash}, got {actual}"
-            )
-
-
-def verify_directory(directory: Path, version: str) -> Path:
+def verify_directory(directory: Path, version: str) -> dict[str, str]:
     if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
-        raise SystemExit("version must be a three-part numeric version")
+        raise ValueError("version must be a three-part numeric version")
     directory = directory.resolve()
     if not directory.is_dir():
-        raise SystemExit(f"release directory does not exist: {directory}")
-
-    aggregate_name = f"ProxyStart-{version}.checksums.sha256"
-    actual = {
-        entry.name
-        for entry in directory.iterdir()
-        if entry.is_file() and entry.name != aggregate_name
-    }
-    if actual != RELEASE_ASSETS:
-        raise ValueError(
-            f"release asset set is {sorted(actual)}, expected {sorted(RELEASE_ASSETS)}"
-        )
-
-    verify_manifest(directory, "ProxyStart-windows.checksums.sha256", set(WINDOWS_ASSETS))
-    verify_manifest(directory, "ProxyStart-macos.checksums.sha256", set(MACOS_ASSETS))
-
-    aggregate = directory / aggregate_name
-    # Include both archives and the two platform manifests in the top-level
-    # release hash so every uploaded asset has an independently verifiable
-    # digest (the aggregate file itself is intentionally excluded).
-    expected_hashes = {
-        name: sha256(directory / name) for name in sorted(RELEASE_ASSETS)
-    }
-    if aggregate.is_file():
-        existing = read_manifest(aggregate)
-        if existing != expected_hashes:
-            raise ValueError(f"existing aggregate manifest is stale: {aggregate.name}")
-        # A valid aggregate is already part of the release input. Do not
-        # rewrite it: pathlib/text-mode newline conversion on Windows would
-        # change CRLF bytes and invalidate the uploaded digest.
-        print(f"verified {len(RELEASE_ASSETS)} release assets; kept {aggregate.name}")
-        return aggregate
-
-    lines = [f"{digest}  {name}" for name, digest in expected_hashes.items()]
-    with aggregate.open("w", encoding="ascii", newline="\n") as stream:
-        stream.write("\n".join(lines) + "\n")
-    print(f"verified {len(RELEASE_ASSETS)} release assets and wrote {aggregate.name}")
-    return aggregate
-
+        raise ValueError("release directory does not exist")
+    actual = {entry.name for entry in directory.iterdir()}
+    if actual != RELEASE_ASSETS or any(not p.is_file() or p.is_symlink() for p in directory.iterdir()):
+        raise ValueError(f"release asset set is {sorted(actual)}, expected {sorted(RELEASE_ASSETS)}")
+    exe = (directory / "ProxyStart-windows-amd64.exe").read_bytes()
+    if len(exe) < 64 or exe[:2] != b"MZ":
+        raise ValueError("invalid Windows executable")
+    offset = struct.unpack_from("<I", exe, 0x3c)[0]
+    if offset + 94 > len(exe) or exe[offset:offset+4] != b"PE\0\0":
+        raise ValueError("invalid Windows PE header")
+    if struct.unpack_from("<H", exe, offset+4)[0] != 0x8664 or struct.unpack_from("<H", exe, offset+92)[0] != 2:
+        raise ValueError("Windows release must be an x64 GUI executable")
+    with (directory / "ProxyStart-macos-universal.dmg").open("rb") as stream:
+        if stream.seek(0, 2) < 512:
+            raise ValueError("invalid macOS DMG")
+        stream.seek(-512, 2)
+        if stream.read(4) != b"koly":
+            raise ValueError("invalid macOS DMG trailer")
+    hashes = {name: sha256(directory / name) for name in sorted(RELEASE_ASSETS)}
+    print(json.dumps({"version": version, "sha256": hashes}, sort_keys=True))
+    return hashes
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--version", required=True)
     args = parser.parse_args()
-
     verify_directory(args.directory, args.version)
     return 0
-
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except ValueError as error:
-        print(f"release verification failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+    except (OSError, ValueError, struct.error) as error:
+        raise SystemExit(f"release verification failed: {error}")

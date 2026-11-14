@@ -1,180 +1,31 @@
-# 架构与扩展
+# 架构
 
-## 依赖方向
+Proxy Start 仅有 Codex 桌面端和代理控制台两个用例。
 
-```text
-cmd/proxy-start（组装入口）
-  ├─ ui → application → domain
-  ├─ adapters/native → application 的小接口与 domain
-  ├─ infrastructure → application 的小接口与 domain
-  └─ platform/windows、platform/darwin、platform/console → application 的小接口与 domain
-```
+- `domain`：端口配置、应用身份、启动计划、进程身份及代理观察结果。
+- `application.Desktop`：自动发现、三秒状态轮询、端口保存和两个启动用例；通过窄接口注入平台实现。
+- `adapters/native`：校验 Codex 身份，生成 HTTP 代理参数与子进程环境，不执行系统操作。
+- `platform/windows` / `platform/darwin`：Codex 定位、进程启动及只读参数检查。
+- `platform/console`：独立 PowerShell / Terminal，仅修改子进程环境。
+- `infrastructure/storage`：v2 原子保存及 v1 原文备份迁移。
+- `ui`：固定浅色的 MyGO 单页界面，业务工作在后台执行。
 
-领域与应用层不导入 MyGO、Windows API、代理引擎或 JSON 存储实现。UI 只调用 `application.Desktop` 的用例门面；文件访问、进程操作、凭据和提权均位于实现层。所有依赖在入口显式注入，没有全局可变服务注册表。
+## 状态与并发
 
-## 职责划分
+界面启动不等待扫描完成，初始显示“扫描中”。发现安装后检查进程，以三秒间隔刷新；用户可重新扫描。扫描和启动串行执行，启动前重新解析安装位置，并在端口检查前后检查是否已有进程。普通启动遇到已有进程时返回“已启动”；显式重启先验证代理和启动计划，再按本次发现的 PID、路径及创建时间停止原进程并启动。停止不依赖代理连通，进程路径按观察结果分组，兼容升级后旧实例仍在运行。所有生命周期操作串行执行；关闭启动器不会调用停止。
 
-| 模块 | 单一职责 |
-| --- | --- |
-| domain | 程序身份、代理配置、不可变绕过策略、启动方案和运行状态等平台无关概念 |
-| application/catalog | 解析与管理启动项，不执行程序 |
-| application/profiles | 代理配置、凭据引用和连接检测 |
-| application/strategy | 用不可变的原生适配器集合选择启动策略 |
-| application/launcher | 每个程序的启动、结束、重启及状态变化 |
-| application/runtime | 串行维护共享强制代理会话，提交完整配置 |
-| adapters/native | 识别已知软件并生成启动方案，不进行系统调用 |
-| platform/windows | 快捷方式/AppX 解析、环境继承、进程身份与进程树操作 |
-| platform/darwin | .app 清单与图标解析、libproc 进程身份、独立会话启动及有界停止 |
-| platform/console | 实现 `application.ConsoleLauncher` 的平台 shell 适配；只负责新 shell 的环境边界，不修改父进程或系统全局环境 |
-| application/platform | 从组装入口提供不可变的平台能力快照，供界面展示 |
-| infrastructure/proxifyre | 强制代理配置、受限管理员辅助进程和服务控制 |
-| infrastructure/unsupportedproxy | 平台缺少强制代理时拒绝应用规则，不启动无代理的目标程序 |
-| infrastructure/httpbridge | SOCKS5 CONNECT 到 HTTP CONNECT 的协议转换，不接触应用列表 |
-| infrastructure/storage、credentials、netprobe | 非秘密配置持久化、系统凭据管理、代理协议与连接探测 |
+进程启动证据按 PID、创建时间和路径绑定。Windows 使用父进程关系排除 Chromium 子进程，并通过 CIM 读取主进程命令行；macOS 使用 KERN_PROCARGS2 的 argv 部分，严格按 argc 截止，不读取环境变量。权限不足和证据冲突保留未知状态。
 
-接口定义在使用方，不为每个结构体机械建立接口。`Desktop` 只转发用例与汇总快照，业务逻辑由各服务承担。
+Windows 包内启动将配置及回执路径编码进自包含请求，不依赖 `Invoke-CommandInDesktopPackage` 继承调用方环境。外层 PowerShell 使用 `CREATE_NO_WINDOW`，包激活后运行同一 GUI 可执行文件的内部无界面入口，该入口在配置、扫描和 UI 初始化前处理请求，以 `CREATE_NO_WINDOW` 创建目标进程并原子写回启动结果。包内不再拉起 PowerShell，不增加额外辅助可执行文件；Codex GUI 正常显示，设置中的独立代理控制台继续显式创建可见控制台。
 
-## 启动流程
+停止时按子进程优先顺序处理，在用于终止的同一个句柄上复核创建时间；已退出或 PID 已复用视为旧目标已消失，仍在运行的真实权限错误继续上报。应用层在清理报错后复查 Codex 主进程，确认全部退出时按停止成功处理。
 
-1. 重新解析原始路径或包标识，避免快捷方式目标或 MSIX 安装目录更新后继续使用旧路径。
-2. 查找对应的现有进程；普通“启动”不自动结束已有程序。
-3. 读取代理、凭据和 `BypassPolicy`，对所需协议执行连接检测。
-4. 由策略选择器查找适配器，并同时检查协议、认证和绕过策略是否支持。
-5. 原生方式生成 `LaunchSpec` 并交给平台执行；强制方式先提交显式路径规则，再启动目标程序。
-6. 记录实际 PID、创建时间和路径。进程启动成功不自动升级为“实际连接已验证”。
+包内启动协议将环境变量序列化为名称 / 值条目的数组，保留 `ALL_PROXY` / `all_proxy` 等正式启动计划中的成对变量；请求由 Go 解析，避免 PowerShell JSON 键不区分大小写的问题。macOS 的大小写变量保持原有语义。
 
-`LaunchSpec.DirectLaunch` 可让支持直接执行的桌面程序使用普通进程启动，同时保留包身份。Windows Store Claude 原生适配启用该选项：每次仍通过 AppX 解析当前版本，再直接运行 `claude.exe` 并继承所选代理环境。这样与现有可用脚本保持相同启动机制，避免包内 PowerShell 激活丢失启动配置环境。Codex 继续使用打包应用激活路径。
+进程存活、显式代理参数和真实网络路由是不同事实。本工具只展示前两项；没有代理参数不能证明直连。端口预检只连接本机监听端口。
 
-## 代理控制台用例
+## 配置与资源
 
-代理设置表格中的“打开代理控制台”调用 `Desktop.OpenProxyConsole`。它先读取选中的代理配置和凭据；协议为自动检测时，按 HTTP 已验证、SOCKS5 已验证的顺序选择，未得到已验证结果就返回错误，不把协议猜测当成成功。随后调用注入的 `application.ConsoleLauncher`：
+v2 只有版本和端口。加载旧配置不写盘，首次保存先备份原文；旧文件被外部修改或备份失败时拒绝替换。新格式使用临时文件、同步和原子替换。
 
-```go
-type ConsoleLauncher interface {
-    Open(context.Context, ConsoleSpec) error
-}
-```
-
-`ConsoleSpec` 只在运行时携带配置生成的环境映射和要清除的变量。HTTP、HTTPS、ALL_PROXY 以及对应小写变量都会写入同一代理 URL；HTTP / SOCKS5 的用户名和密码由 URL 编码后再组成 URL。非空 `BypassPolicy` 会以逗号分隔写入 `NO_PROXY` 与 `no_proxy`，覆盖子 shell 继承的值；空策略才会清除这两个继承变量。父进程环境、系统代理、Clash 配置、VPN/TUN 和全局路由不变。规则只在下一次启动、重启或打开新控制台时读取，已有进程保持原环境。打开控制台本身只表示 shell 创建请求成功，不表示目标软件流量已经实际连通。
-
-领域层把编辑器输入收敛为不可变的值对象：
-
-```go
-type BypassPolicy struct { /* validated, private domains */ }
-
-func NewBypassPolicy([]string) (BypassPolicy, error)
-func ParseBypassPolicy(string) (BypassPolicy, error) // newline or comma separated
-func (BypassPolicy) Domains() []string               // defensive copy
-func (BypassPolicy) Empty() bool
-```
-
-每个值是规范化后的 ASCII 主机名或域名（含 Punycode），大小写归一化并去重；`example.com` 表示根域及其子域。URL、端口、通配符和 IP/CIDR 在领域层拒绝。配置保存 `BypassDomains`，旧 JSON 缺少该字段时按空策略处理。
-
-Windows 的实现以 `CREATE_NEW_CONSOLE` 启动独立 PowerShell，并只把环境交给该进程及其子进程。macOS 的实现通过 Terminal.app 执行权限为 0700 的私有 `.command` 文件；脚本先自删再导出变量并进入干净 zsh。启动器最多等待 10 秒确认脚本被读取，失败、取消或超时立即清理临时文件。该路径目前尚未在 Mac 实机运行，也未完成 Developer ID 签名或公证。
-
-同一应用操作使用独立锁；共享引擎配置使用运行时管理器的锁。外部 IO 有取消和超时；目标程序本身不使用随操作上下文取消的 `exec.CommandContext`，也不加入客户端退出时自动杀死的 Job。
-
-## 添加原生适配器
-
-实现 `application.NativeAdapter`：
-
-```go
-type NativeAdapter interface {
-    ID() string
-    Match(domain.AppIdentity) bool
-    Supports(domain.ProxyEndpoint, domain.BypassPolicy) bool
-    Plan(domain.AppIdentity, domain.ProxyEndpoint, domain.BypassPolicy) (domain.LaunchSpec, error)
-}
-```
-
-参考 `internal/adapters/native/adapters.go` 的 Codex 实现和 `claude.go` 的 Windows Store Claude 实现。生产名单集中在 `native.Production()`，注册 Codex 与 Claude；Claude 仅匹配 Store 包族 `Claude_pzs8sxrjxfjjc`（或 AUMID 中的同一包族）与 `claude.exe` 的组合。Windows 平台能力声明两者，macOS 仍仅声明 Codex。`Match` 使用真实软件身份；`Supports` 声明支持的协议、认证和绕过策略边界；`Plan` 是纯函数，复制参数与环境设置，不能更改传入对象或直接启动进程。两者共用 Chromium HTTP 参数、域名绕过和子进程环境构建。适配器若不支持绕过，必须在 `Supports` 中显式拒绝非空策略，不能静默忽略规则。新增支持时修改该名单，不修改启动器内的条件分支。macOS bundle ID 与路径规则参考 [OpenAI 官方启动器](https://github.com/openai/codex/blob/main/codex-rs/cli/src/desktop_app/mac.rs)。
-
-新增适配器至少测试身份误匹配、协议与认证边界、已有代理参数处理，以及输入不可变性。应用需要新的平台能力时，再扩展对应小接口，不给已有接口加入无关方法。
-
-下面是一个可复制后再按实测安装路径修改的最小适配器示例。`ExampleTool` 是占位名称，不代表项目已经验证过某个真实软件；只有确认了真实安装根目录、可执行文件名和代理能力后，才应把它加入生产组装入口。
-
-```go
-package exampleadapter
-
-import (
-    "fmt"
-    "strings"
-
-    "proxy-start/internal/application"
-    "proxy-start/internal/domain"
-)
-
-// ExampleHTTPToolAdapter is a deliberately narrow example: one verified
-// executable path family and unauthenticated HTTP only.
-type ExampleHTTPToolAdapter struct{}
-
-func NewExampleHTTPTool() application.NativeAdapter {
-    return &ExampleHTTPToolAdapter{}
-}
-
-func (ExampleHTTPToolAdapter) ID() string { return "example-http-tool" }
-
-func (ExampleHTTPToolAdapter) Match(identity domain.AppIdentity) bool {
-    path := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(identity.Executable), "/", `\`))
-    for _, root := range []string{
-        `c:\program files\examplevendor\exampletool\`,
-        `c:\program files (x86)\examplevendor\exampletool\`,
-    } {
-        if strings.HasPrefix(path, root) && strings.HasSuffix(path, `\example-tool.exe`) {
-            return true
-        }
-    }
-    return false
-}
-
-func (ExampleHTTPToolAdapter) Supports(proxy domain.ProxyEndpoint, bypass domain.BypassPolicy) bool {
-    host := strings.TrimSpace(proxy.Host)
-    return bypass.Empty() &&
-        proxy.Protocol == domain.ProtocolHTTP &&
-        host != "" && !strings.ContainsAny(host, "/\\\r\n\t ") &&
-        proxy.Port >= 1 && proxy.Port <= 65535 &&
-        strings.TrimSpace(proxy.Username) == "" && strings.TrimSpace(proxy.Password) == ""
-}
-
-func (a ExampleHTTPToolAdapter) Plan(identity domain.AppIdentity, proxy domain.ProxyEndpoint, bypass domain.BypassPolicy) (domain.LaunchSpec, error) {
-    if !a.Match(identity) {
-        return domain.LaunchSpec{}, fmt.Errorf("example adapter does not match %q", identity.Executable)
-    }
-    if !a.Supports(proxy, bypass) {
-        return domain.LaunchSpec{}, fmt.Errorf("example adapter requires an unauthenticated HTTP proxy and an empty bypass policy")
-    }
-
-    proxyURL := "http://" + proxy.Address()
-    identityCopy := identity
-    identityCopy.Arguments = append([]string(nil), identity.Arguments...)
-    args := append([]string(nil), identity.Arguments...)
-    args = append(args, "--proxy-server="+proxyURL)
-    environment := map[string]string{
-        "HTTP_PROXY":  proxyURL,
-        "HTTPS_PROXY": proxyURL,
-    }
-    return domain.LaunchSpec{
-        Identity:    identityCopy,
-        Arguments:   args,
-        Environment: environment,
-    }, nil
-}
-```
-
-把适配器注入组装入口，而不是在启动器里增加软件名称分支：
-
-```go
-desktop, err := application.NewDesktop(ctx, application.Dependencies{
-    // ...store, resolver, process controller, probe and backend...
-    // 仅在实际验证并决定扩大名单后加入示例适配器。
-    Adapters: append(native.Production(), exampleadapter.NewExampleHTTPTool()),
-})
-```
-
-示例的 `Match` 只依据已确认的路径前缀和可执行文件名，`Plan` 复制参数并创建新的环境映射，不执行任何系统命令。真实适配器还应按该软件的实际行为补充冲突代理参数清理和测试，然后再纳入入口注入列表。
-
-## 退出与平台隔离
-
-关闭窗口只隐藏。完整退出取消监视、释放强制代理和 HTTP 桥接，不调用目标程序的停止接口。管理员辅助进程只接受代理会话更新、状态握手和关闭，不接受任意命令执行。
-
-Windows 和 macOS 分别通过带构建标签的组装文件注入 `AppResolver`、`ProcessController`、`CredentialStore` 和 `ForcedBackend`；核心用例及视图不散布系统类型判断。macOS 的强制代理后端返回明确不可用错误，仍会先于目标进程启动执行，保证不会将回退误当成成功。Linux 的入口直接返回未支持，不提供客户端产物。
+退出只取消观察任务，Codex 和独立控制台继续运行。没有强制代理引擎、helper、全局路由或系统凭据依赖。

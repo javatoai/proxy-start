@@ -109,46 +109,14 @@ try {
     if (-not $KeepSymbols) { $linkerFlags += @("-s", "-w") }
     if ($GUI) { $linkerFlags += "-H=windowsgui" }
 
-    $helperPackage = "./cmd/proxy-start-helper"
     $mainPackage = "./cmd/proxy-start"
     $iconScript = Join-Path $PSScriptRoot "set-icon.ps1"
     $iconSource = Join-Path $projectRoot "assets\proxy-start.ico"
-    if (-not (Test-Path -LiteralPath $iconScript -PathType Leaf)) {
-        throw "缺少 Windows 图标注入脚本：$iconScript"
+    if (-not (Test-Path -LiteralPath $iconScript -PathType Leaf) -or -not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
+        throw "缺少 Windows 图标脚本或品牌图标资源。"
     }
-    if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
-        throw "缺少 Proxy Start Windows 图标资源：$iconSource"
-    }
-    foreach ($package in @($helperPackage, $mainPackage)) {
-        $packageDir = Join-Path $projectRoot ($package -replace '^\./', '').Replace('/', '\')
-        if (-not (Test-Path -LiteralPath $packageDir -PathType Container)) {
-            throw "缺少构建入口：$packageDir"
-        }
-    }
-
-    # Build the elevated helper first. The client embeds this exact digest so
-    # a stale, replaced, or unrelated helper is rejected before use.
-    $helperOutput = Join-Path $OutputDir "proxy-start-helper.exe"
-    $helperLdflags = $linkerFlags -join " "
-    $helperArgs = @("build", "-trimpath")
-    if (-not [string]::IsNullOrWhiteSpace($helperLdflags)) {
-        $helperArgs += @("-ldflags", $helperLdflags)
-    }
-    $helperArgs += @("-o", $helperOutput, $helperPackage)
-    Write-Host ("> go " + ($helperArgs -join " ")) -ForegroundColor DarkGray
-    & $goExe @helperArgs
-    if ($LASTEXITCODE -ne 0) { throw "构建失败：$helperPackage" }
-    Write-Host "> set Windows icon (helper)" -ForegroundColor DarkGray
-    & $iconScript -ExePath $helperOutput -IconPath $iconSource
-    if ($LASTEXITCODE -ne 0) { throw "helper 图标资源注入失败。" }
-    Assert-GoBuildInfo $helperOutput 'proxy-start/cmd/proxy-start-helper'
-    $helperSHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $helperOutput).Hash.ToLowerInvariant()
-    Write-Host ("已生成 helper：$helperOutput") -ForegroundColor Green
-    Write-Host ("helper SHA-256：$helperSHA256") -ForegroundColor DarkGray
-
     $mainOutput = Join-Path $OutputDir "proxy-start.exe"
     $mainLinkerFlags = @($linkerFlags)
-    $mainLinkerFlags += @("-X", "main.helperSHA256=$helperSHA256")
     $mainLdflags = $mainLinkerFlags -join " "
     $mainArgs = @("build", "-trimpath", "-ldflags", $mainLdflags, "-o", $mainOutput, $mainPackage)
     Write-Host ("> go " + ($mainArgs -join " ")) -ForegroundColor DarkGray
@@ -158,7 +126,7 @@ try {
     & $iconScript -ExePath $mainOutput -IconPath $iconSource
     if ($LASTEXITCODE -ne 0) { throw "客户端图标资源注入失败。" }
     Assert-GoBuildInfo $mainOutput 'proxy-start/cmd/proxy-start'
-    Write-Host ("已生成：$mainOutput（内嵌 helper SHA-256：$helperSHA256）") -ForegroundColor Green
+    Write-Host ("已生成：$mainOutput") -ForegroundColor Green
 
     Write-Host "构建完成。" -ForegroundColor Green
 }

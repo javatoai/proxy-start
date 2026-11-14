@@ -4,26 +4,66 @@ package windows
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"proxy-start/internal/adapters/native"
 	"proxy-start/internal/domain"
 )
 
 func TestPackagedLaunchEnvironmentAppliesBypassAfterUnset(t *testing.T) {
-	unsetIndex := strings.Index(packagedOuterScript, "foreach ($name in @($config.unsetEnvironment))")
-	environmentIndex := strings.Index(packagedOuterScript, "foreach ($property in $config.environment.PSObject.Properties)")
-	if unsetIndex < 0 || environmentIndex < 0 {
-		t.Fatal("packaged launch script does not pass environment and unset settings")
+	t.Setenv("NO_PROXY", "inherited.invalid")
+	environment := packagedEnvironment(packagedLaunchConfig{
+		UnsetEnvironment: []string{"NO_PROXY", "no_proxy"},
+		Environment:      []packagedEnvironmentValue{{Name: "NO_PROXY", Value: "configured.invalid"}},
+	})
+	for _, entry := range environment {
+		key, value, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, "NO_PROXY") {
+			if value != "configured.invalid" {
+				t.Fatal("configured bypass was lost after removing inherited environment")
+			}
+			return
+		}
 	}
-	if unsetIndex > environmentIndex {
-		t.Fatal("packaged launch script removes bypass variables after applying configured environment")
+	t.Fatal("configured bypass is missing")
+}
+
+// Exercise the actual Windows PowerShell JSON parser, even in the default
+// suite where installed-package integration tests are disabled.
+func TestPackagedConfigAcceptsProductionProxyEnvironment(t *testing.T) {
+	spec, err := native.PlanCodex(domain.AppIdentity{Executable: `C:\Codex\ChatGPT.exe`, PackageName: "OpenAI.Codex"}, 7897)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(packagedOuterScript, "Remove('NO_PROXY'") || strings.Contains(packagedOuterScript, "Remove(\"NO_PROXY\"") {
-		t.Fatal("packaged launch script contains a hard-coded NO_PROXY removal")
+	data, err := json.Marshal(packagedConfig(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output, err := runPowerShellJSON(ctx, `$ErrorActionPreference='Stop'
+$config = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:PROXY_START_TEST_CONFIG)) | ConvertFrom-Json
+@($config.environment) | ConvertTo-Json -Compress`, map[string]string{"PROXY_START_TEST_CONFIG": base64.StdEncoding.EncodeToString(data)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var variables []packagedEnvironmentValue
+	if err := json.Unmarshal([]byte(output), &variables); err != nil {
+		t.Fatal(err)
+	}
+	if len(variables) != len(spec.Environment) {
+		t.Fatalf("parsed %d environment entries, want %d", len(variables), len(spec.Environment))
+	}
+	for _, variable := range variables {
+		if expected, ok := spec.Environment[variable.Name]; !ok || variable.Value != expected {
+			t.Fatalf("proxy variable changed during JSON round trip: %+v", variable)
+		}
 	}
 }
 

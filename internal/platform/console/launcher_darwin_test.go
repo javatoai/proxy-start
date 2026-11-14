@@ -13,12 +13,11 @@ import (
 )
 
 func applicationSpecForTest() application.ConsoleSpec {
-	return application.ConsoleSpec{ProfileName: "fixture", Environment: map[string]string{"HTTP_PROXY": "http://user:fixture-password@example.test:8080"}, UnsetEnvironment: []string{"NO_PROXY", "no_proxy"}}
+	return application.ConsoleSpec{Environment: map[string]string{"HTTP_PROXY": "http://user:fixture-password@example.test:8080"}, UnsetEnvironment: []string{"NO_PROXY", "no_proxy"}}
 }
 
 func TestDarwinCommandScriptCarriesBypassEnvironment(t *testing.T) {
 	spec := application.ConsoleSpec{
-		ProfileName: "fixture",
 		Environment: map[string]string{
 			"HTTP_PROXY": "http://127.0.0.1:7897",
 			"NO_PROXY":   "example.com,api.example",

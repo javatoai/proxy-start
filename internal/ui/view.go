@@ -1,13 +1,11 @@
 package ui
 
 import (
-	"strings"
-
 	"github.com/egoist/mygo"
 	nativeui "github.com/egoist/mygo/ui"
+	"math"
+	"time"
 )
-
-const desktopUIFont = "Microsoft YaHei UI, Segoe UI"
 
 func (m *model) view(c *nativeui.Context) {
 	m.applyTheme(c)
@@ -16,138 +14,179 @@ func (m *model) view(c *nativeui.Context) {
 		return
 	}
 	t := c.Theme()
-	nativeui.Row(c).Fill().Background(t.Background).Font(m.uiFontFamily()).Children(func() {
-		m.sidebar(c)
-		nativeui.Column(c).Grow(1).MinWidth(0).Fill().Children(func() {
-			nativeui.Box(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
-				switch m.page {
-				case pageProxySettings:
-					m.proxySettingsPage(c)
-				case pageSystemSettings:
-					m.systemSettingsPage(c)
-				default:
-					m.launchPage(c)
+	_, height := c.Size()
+	diameter := float32(160)
+	if height < 360 {
+		diameter = 144
+	}
+	nativeui.Column(c).Fill().Background(t.Background).Font(m.uiFontFamily()).Children(func() {
+		nativeui.Row(c).FillWidth().Height(44).Padding(6, 16).Justify(nativeui.End).AlignItems(nativeui.Center).Children(func() {
+			gear := nativeui.ButtonBase(c.Key("settings")).Size(32, 32).Radius(8).Label("打开设置").Tooltip("设置").Disabled(m.busy)
+			if gear.Hovered() {
+				gear.Background(t.SurfaceHover)
+			}
+			gear.Children(func() { nativeui.Icon(c, settingsIcon).Size(20, 20).TextColor(t.TextMuted).Center() })
+			if gear.Clicked() {
+				m.openSettings()
+			}
+		})
+		nativeui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(4, 20, 20, 20).Gap(20).AlignItems(nativeui.Center).Justify(nativeui.Center).Children(func() {
+			m.codexCircle(c, diameter)
+			nativeui.Row(c).Gap(12).Children(func() {
+				label, action := "启动", "start"
+				if m.snapshot.State == "running" {
+					label, action = "重启", "restart"
+				}
+				if m.pendingAction == "start" {
+					label = "启动中"
+				} else if m.pendingAction == "restart" {
+					label = "重启中"
+				}
+				if nativeui.PrimaryButton(c, label).Label(actionLabel(action)).Width(116).Height(38).Disabled(!m.canLaunch()).Clicked() {
+					m.runLifecycle(action)
+				}
+				stopLabel := "停止"
+				if m.pendingAction == "stop" {
+					stopLabel = "停止中"
+				}
+				if nativeui.Button(c, stopLabel).Label("停止 Codex").Width(116).Height(38).Disabled(!m.canStop()).Clicked() {
+					m.runLifecycle("stop")
 				}
 			})
+			if m.snapshot.ScanError != "" && !m.snapshot.ScanNotFound {
+				nativeui.Text(c, m.snapshot.ScanError).FontSize(12).TextColor(t.Danger).Wrap().MaxWidth(360)
+			}
+			if m.snapshot.RuntimeError != "" {
+				nativeui.Text(c, m.snapshot.RuntimeError).FontSize(12).TextColor(t.Danger).Wrap().MaxWidth(360)
+			}
+			if m.failed && m.message != "" {
+				nativeui.Row(c).FillWidth().MaxWidth(360).Gap(8).AlignItems(nativeui.Center).Children(func() {
+					nativeui.Text(c, compactError(m.message)).Grow(1).MinWidth(0).FontSize(12).TextColor(t.Danger).Wrap()
+					if nativeui.Button(c, "详情").Label("查看错误详情").Height(28).Clicked() {
+						m.errorOpen = true
+					}
+				})
+			}
 		})
 	})
-	if m.installed.open {
-		m.installedDialog(c)
-	}
-	if m.proxyModalOpen {
-		m.profileModal(c)
-	}
-	if m.deleteModalOpen {
-		m.deleteProfileModal(c)
-	}
-	if m.toastDetailOpen {
-		m.toastDetailModal(c)
-	}
-	m.operationToast(c)
+	m.settingsDialog(c)
+	m.errorDialog(c)
 }
 
-func (m *model) applyTheme(c *nativeui.Context) {
-	var theme *nativeui.Theme
-	switch strings.ToLower(m.snapshot.Settings.Theme) {
-	case "light":
-		theme = nativeui.LightTheme()
-	case "dark":
-		theme = nativeui.DarkTheme()
-	case "system", "":
-		// MyGO resets Context.Theme from the host's current appearance at
-		// the beginning of every frame. Copy it before applying product
-		// colors so SetTheme also updates the root text style.
-		copy := *c.Theme()
-		theme = &copy
-	default:
-		copy := *c.Theme()
-		theme = &copy
+func actionLabel(action string) string {
+	if action == "restart" {
+		return "重启 Codex"
 	}
-	t := theme
-	// Keep the product accent stable across Windows accent preferences so
-	// the selected navigation and primary actions retain the intended blue.
-	if t.Dark {
-		t.Background = nativeui.Hex("#171D26")
-		t.Surface = nativeui.Hex("#232B37")
-		t.SurfaceHover = nativeui.Hex("#2C3746")
-		t.SurfacePressed = nativeui.Hex("#364255")
-		t.Border = nativeui.Hex("#394453")
-		t.Text = nativeui.Hex("#EDF2F7")
-		t.TextMuted = nativeui.Hex("#A8B3C2")
-		t.Success = nativeui.Hex("#63D69A")
-		t.Warning = nativeui.Hex("#F4B75E")
-		t.Danger = nativeui.Hex("#FF8A8F")
-		t.Accent = nativeui.Hex("#2C6DE8")
-		t.AccentHover = nativeui.Hex("#2563D9")
-		t.AccentPressed = nativeui.Hex("#1D4ED8")
-		t.Selection = nativeui.RGBA(74, 140, 255, 0.34)
-		t.Focus = nativeui.RGBA(104, 160, 255, 0.62)
+	return "启动 Codex"
+}
+
+func (m *model) canLaunch() bool {
+	return !m.busy && !m.snapshot.Scanning && (m.snapshot.State == "stopped" || m.snapshot.State == "running") && m.snapshot.ScanError == "" && m.snapshot.Identity.Executable != ""
+}
+func (m *model) canStop() bool {
+	return !m.busy && !m.snapshot.Scanning && m.snapshot.State == "running"
+}
+
+func (m *model) codexCircle(c *nativeui.Context, diameter float32) {
+	t := c.Theme()
+	background, foreground, border := t.Surface, t.TextMuted, t.Border
+	if m.snapshot.State == "running" {
+		background, foreground, border = nativeui.Hex("#EDF7F0"), t.Success, nativeui.Hex("#C3E2CD")
+	} else if m.snapshot.State == "stopped" {
+		background, foreground, border = nativeui.Hex("#F0F5FF"), t.Accent, nativeui.Hex("#D7E3FB")
+	}
+	enabled := !m.busy && !m.snapshot.Scanning
+	var circle nativeui.Element
+	if enabled {
+		circle = nativeui.ButtonBase(c.Key("codex-refresh"))
 	} else {
-		t.Background = nativeui.Hex("#FFFFFF")
-		t.Surface = nativeui.Hex("#F3F5F7")
-		t.SurfaceHover = nativeui.Hex("#E9EDF2")
-		t.SurfacePressed = nativeui.Hex("#DEE5ED")
-		t.Border = nativeui.Hex("#DCE1E8")
-		t.Text = nativeui.Hex("#202938")
-		t.TextMuted = nativeui.Hex("#667085")
-		t.Success = nativeui.Hex("#177B46")
-		t.Warning = nativeui.Hex("#A85A08")
-		t.Danger = nativeui.Hex("#C53B3F")
-		t.Accent = nativeui.Hex("#2C6DE8")
-		t.AccentHover = nativeui.Hex("#2563D9")
-		t.AccentPressed = nativeui.Hex("#1D4ED8")
-		t.Selection = nativeui.RGBA(52, 120, 246, 0.23)
-		t.Focus = nativeui.RGBA(52, 120, 246, 0.52)
+		circle = nativeui.Box(c.Key("codex-refresh"))
 	}
-	t.AccentText = nativeui.Hex("#FFFFFF")
-	t.Font = m.uiFontFamily()
-	t.FontSize = 14
-	t.Radius = 8
-	c.SetTheme(t)
-}
-
-func (m *model) sidebar(c *nativeui.Context) {
-	t := c.Theme()
-	sidebar := nativeui.Hex("#EDF2F6")
-	if t.Dark {
-		sidebar = t.Surface
+	circle.Size(diameter, diameter).Radius(diameter/2).Padding(0).Background(background).Border(1, border).Label("刷新 Codex 状态").Tooltip("刷新状态")
+	if enabled && circle.Hovered() {
+		circle.Background(nativeui.Hex("#E8EEF5"))
 	}
-	nativeui.Column(c).Width(214).FillHeight().Padding(24, 16, 20, 16).Gap(20).Background(sidebar).Children(func() {
-		nativeui.Row(c).Gap(10).AlignItems(nativeui.Center).Children(func() {
-			m.brandBadge(c)
-			nativeui.Column(c).Gap(3).Children(func() {
-				nativeui.Text(c, "Proxy Start").FontSize(18).FontWeight(600).SingleLine()
-				nativeui.Text(c, "按应用连接代理").FontSize(12).TextColor(t.TextMuted).SingleLine()
-			})
-		})
-		m.sidebarDivider(c)
-		nativeui.Column(c).Gap(5).Children(func() {
-			m.navButton(c, "应用", pageLaunch, appsIcon)
-			m.navButton(c, "代理设置", pageProxySettings, settingsIcon)
-			m.navButton(c, "系统设置", pageSystemSettings, settingsIcon)
+	circle.Children(func() {
+		nativeui.Column(c).Fill().Gap(8).AlignItems(nativeui.Center).Justify(nativeui.Center).Children(func() {
+			nativeui.Text(c, "Codex").FontSize(17).TextColor(foreground)
+			nativeui.Text(c, m.codexStatus()).FontSize(24).FontWeight(600).TextColor(foreground)
 		})
 	})
-}
-
-func (m *model) sidebarDivider(c *nativeui.Context) {
-	nativeui.Box(c).Height(1).FillWidth().Background(c.Theme().Border)
-}
-
-func (m *model) navButton(c *nativeui.Context, label string, page int, icon *nativeui.SVG) {
-	t := c.Theme()
-	button := nativeui.ButtonBase(c).FillWidth().Height(40).Padding(0, 12).Radius(8).Label(label).TextColor(t.Text)
-	if page == m.page {
-		button.Background(t.Accent).TextColor(t.AccentText)
-	} else if button.Hovered() {
-		button.Background(t.SurfaceHover)
+	active := m.pendingAction != "" || m.snapshot.Scanning
+	target := float32(0)
+	if active {
+		target = 1
 	}
-	button.Children(func() {
-		nativeui.Row(c).FillWidth().Gap(10).AlignItems(nativeui.Center).Children(func() {
-			nativeui.Icon(c, icon).Size(17, 17)
-			nativeui.Text(c, label).FontSize(14).FontWeight(500)
+	opacity := circle.Animate("activity", target, 180*time.Millisecond)
+	if active && m.animationStart.IsZero() {
+		m.animationStart = c.Now()
+	}
+	if opacity > 0.001 {
+		epoch := m.animationStart
+		reduced := c.Preferences().ReduceMotion
+		color := t.Accent
+		color.A = uint8(255 * opacity)
+		circle.DrawOver(func(p *nativeui.Painter, r nativeui.Rect) {
+			phase := p.Now().Sub(epoch).Seconds()
+			if reduced {
+				phase = 0
+			} else {
+				p.AnimationFrame()
+			}
+			drawRefreshRing(p, r, phase, color)
 		})
-	})
-	if button.Clicked() {
-		m.page = page
+	} else if !active {
+		m.animationStart = time.Time{}
+	}
+	if enabled && circle.Clicked() {
+		m.refreshCodex()
+	}
+}
+
+func drawRefreshRing(p *nativeui.Painter, r nativeui.Rect, phase float64, color nativeui.Color) {
+	cx, cy, radius := r.X+r.W/2, r.Y+r.H/2, r.W/2-3
+	start := phase*2*math.Pi/1.05 - math.Pi/2
+	span := math.Pi * (0.85 + 0.35*math.Sin(phase*2*math.Pi/1.6))
+	var arc nativeui.Path
+	for index := 0; index <= 56; index++ {
+		angle := start + span*float64(index)/56
+		x, y := cx+radius*float32(math.Cos(angle)), cy+radius*float32(math.Sin(angle))
+		if index == 0 {
+			arc.MoveTo(x, y)
+		} else {
+			arc.LineTo(x, y)
+		}
+	}
+	p.StrokePath(&arc, 3, color)
+}
+
+func (m *model) codexStatus() string {
+	switch m.pendingAction {
+	case "refresh":
+		return "刷新中"
+	case "start":
+		return "启动中"
+	case "restart":
+		return "重启中"
+	case "stop":
+		return "停止中"
+	}
+	if m.snapshot.Scanning {
+		return "扫描中"
+	}
+	if m.snapshot.Identity.Executable == "" && m.snapshot.ScanNotFound {
+		return "未找到"
+	}
+	switch m.snapshot.State {
+	case "running":
+		return "已启动"
+	case "stopped":
+		return "未启动"
+	case "starting":
+		return "启动中"
+	case "stopping":
+		return "停止中"
+	default:
+		return "状态待确认"
 	}
 }

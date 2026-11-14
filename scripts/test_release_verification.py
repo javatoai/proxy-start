@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import tempfile
+import struct
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -36,33 +37,14 @@ class ReleaseFixture:
         self.root = root
 
     def create(self) -> Path:
-        contents = {
-            "ProxyStart-windows-amd64.zip": b"windows package",
-            "ProxyStart-source.zip": b"source package",
-            "ProxyStart-macos-arm64.zip": b"mac arm package",
-            "ProxyStart-macos-amd64.zip": b"mac intel package",
-        }
-        for name, value in contents.items():
-            (self.root / name).write_bytes(value)
-
-        windows = [
-            "ProxyStart-windows-amd64.zip",
-            "ProxyStart-source.zip",
-        ]
-        macos = [
-            "ProxyStart-macos-arm64.zip",
-            "ProxyStart-macos-amd64.zip",
-        ]
-        (self.root / "ProxyStart-windows.checksums.sha256").write_text(
-            "".join(f"{digest(self.root / name)}  {name}\n" for name in windows),
-            encoding="ascii",
-            newline="\n",
-        )
-        (self.root / "ProxyStart-macos.checksums.sha256").write_text(
-            "".join(f"{digest(self.root / name)}  {name}\n" for name in macos),
-            encoding="ascii",
-            newline="\n",
-        )
+        exe = bytearray(256)
+        exe[:2] = b"MZ"
+        struct.pack_into("<I", exe, 0x3c, 0x80)
+        exe[0x80:0x84] = b"PE\0\0"
+        struct.pack_into("<H", exe, 0x84, 0x8664)
+        struct.pack_into("<H", exe, 0x80+92, 2)
+        (self.root / "ProxyStart-windows-amd64.exe").write_bytes(exe)
+        (self.root / "ProxyStart-macos-universal.dmg").write_bytes(bytes(512)+b"koly"+bytes(508))
         return self.root
 
 
@@ -75,40 +57,41 @@ class ReleaseAssetVerificationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_exact_assets_and_manifest_hashes(self) -> None:
-        aggregate = ASSET_VERIFY.verify_directory(self.root, "0.1.0")
-        self.assertTrue(aggregate.is_file())
-        self.assertNotIn(b"\r\n", aggregate.read_bytes())
-        entries = ASSET_VERIFY.read_manifest(aggregate)
-        self.assertEqual(set(entries), ASSET_VERIFY.RELEASE_ASSETS)
-        for name, expected in entries.items():
+    def test_exact_two_assets_without_extra_manifest(self) -> None:
+        hashes = ASSET_VERIFY.verify_directory(self.root, "0.2.0")
+        self.assertEqual(set(hashes), ASSET_VERIFY.RELEASE_ASSETS)
+        self.assertEqual(set(p.name for p in self.root.iterdir()), ASSET_VERIFY.RELEASE_ASSETS)
+        for name, expected in hashes.items():
             self.assertEqual(expected, digest(self.root / name))
 
-    def test_existing_aggregate_bytes_are_unchanged(self) -> None:
-        aggregate = ASSET_VERIFY.verify_directory(self.root, "0.1.0")
-        # CRLF is a valid manifest representation. The verifier must preserve
-        # it byte-for-byte once the entries have been validated.
-        original = aggregate.read_bytes().replace(b"\n", b"\r\n")
-        aggregate.write_bytes(original)
-        before = aggregate.read_bytes()
-
-        ASSET_VERIFY.verify_directory(self.root, "0.1.0")
-
-        self.assertEqual(aggregate.read_bytes(), before)
-
-    def test_tampered_missing_and_extra_assets_are_rejected(self) -> None:
-        self.root.joinpath("ProxyStart-source.zip").write_bytes(b"tampered")
-        with self.assertRaisesRegex(ValueError, "hash mismatch"):
-            ASSET_VERIFY.verify_directory(self.root, "0.1.0")
-
-        self.root.joinpath("ProxyStart-source.zip").unlink()
+    def test_missing_and_extra_files_or_directories_are_rejected(self) -> None:
+        asset = self.root / "ProxyStart-windows-amd64.exe"
+        original = asset.read_bytes()
+        asset.unlink()
         with self.assertRaisesRegex(ValueError, "release asset set"):
-            ASSET_VERIFY.verify_directory(self.root, "0.1.0")
-
-        self.root.joinpath("ProxyStart-source.zip").write_bytes(b"source package")
-        self.root.joinpath("unexpected.txt").write_bytes(b"extra")
+            ASSET_VERIFY.verify_directory(self.root, "0.2.0")
+        asset.write_bytes(original)
+        for name in ["README.md", "ProxyStart-source.zip", "checksums.sha256"]:
+            extra = self.root / name
+            extra.write_bytes(b"extra")
+            with self.assertRaisesRegex(ValueError, "release asset set"):
+                ASSET_VERIFY.verify_directory(self.root, "0.2.0")
+            extra.unlink()
+        (self.root / "docs").mkdir()
         with self.assertRaisesRegex(ValueError, "release asset set"):
-            ASSET_VERIFY.verify_directory(self.root, "0.1.0")
+            ASSET_VERIFY.verify_directory(self.root, "0.2.0")
+
+    def test_console_executable_and_fake_dmg_are_rejected(self) -> None:
+        exe = self.root / "ProxyStart-windows-amd64.exe"
+        data = bytearray(exe.read_bytes())
+        struct.pack_into("<H", data, 0x80+92, 3)
+        exe.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "GUI executable"):
+            ASSET_VERIFY.verify_directory(self.root, "0.2.0")
+        ReleaseFixture(self.root).create()
+        (self.root / "ProxyStart-macos-universal.dmg").write_bytes(b"not a disk image")
+        with self.assertRaisesRegex(ValueError, "invalid macOS DMG"):
+            ASSET_VERIFY.verify_directory(self.root, "0.2.0")
 
 
 class RemoteReleaseVerificationTests(unittest.TestCase):
