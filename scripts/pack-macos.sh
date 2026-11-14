@@ -33,7 +33,7 @@ for arch in arm64 amd64; do
     GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 "$go_bin" build -trimpath -tags mygo_noinspector -ldflags="-s -w" -o "$work/proxy-start-$arch" ./cmd/proxy-start
 done
 lipo -create "$work/proxy-start-arm64" "$work/proxy-start-amd64" -output "$app/Contents/MacOS/proxy-start"
-lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/proxy-start"
+lipo "$app/Contents/MacOS/proxy-start" -verify_arch arm64 x86_64
 chmod 755 "$app/Contents/MacOS/proxy-start"
 for size in 16 32 128 256 512; do
     cp "assets/proxy-start-$size.png" "$work/icons.iconset/icon_${size}x${size}.png"
@@ -71,7 +71,7 @@ assert files=={"Contents/Info.plist","Contents/PkgInfo","Contents/MacOS/proxy-st
 binary=contents/"MacOS/proxy-start"
 assert binary.stat().st_mode & stat.S_IXUSR
 assert plistlib.loads((contents/"Info.plist").read_bytes())["CFBundleShortVersionString"]==sys.argv[2]
-subprocess.run(["lipo","-verify_arch","arm64","x86_64",str(binary)],check=True)
+subprocess.run(["lipo",str(binary),"-verify_arch","arm64","x86_64"],check=True)
 subprocess.run(["codesign","--verify","--deep","--strict",str(app)],check=True)
 PY
 "$work/mount/Proxy Start.app/Contents/MacOS/proxy-start" --check --config "$work/settings.json" >"$work/check.json"

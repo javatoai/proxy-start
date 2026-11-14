@@ -46,6 +46,7 @@ var (
 	terminateProcess          = kernel32.NewProc("TerminateProcess")
 	getPackageFamilyName      = kernel32.NewProc("GetPackageFamilyName")
 	waitForSingleObject       = kernel32.NewProc("WaitForSingleObject")
+	isProcessInJob            = kernel32.NewProc("IsProcessInJob")
 )
 
 // ProcessController owns only process lifecycle operations. It has no global
@@ -78,17 +79,33 @@ func (c *ProcessController) Start(ctx context.Context, spec domain.LaunchSpec) (
 		return c.startPackaged(ctx, domain.LaunchSpec{Identity: identity, Arguments: args, Environment: spec.Environment, UnsetEnvironment: spec.UnsetEnvironment})
 	}
 
-	cmd := exec.Command(identity.Executable, args...)
-	cmd.Dir = canonicalPath(identity.WorkingDirectory)
-	if cmd.Dir == "" {
-		cmd.Dir = filepath.Dir(identity.Executable)
+	newCommand := func(flags uint32) *exec.Cmd {
+		cmd := exec.Command(identity.Executable, args...)
+		cmd.Dir = canonicalPath(identity.WorkingDirectory)
+		if cmd.Dir == "" {
+			cmd.Dir = filepath.Dir(identity.Executable)
+		}
+		cmd.Env = mergeEnvironment(spec.Environment, spec.UnsetEnvironment)
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags, NoInheritHandles: true}
+		return cmd
 	}
-	cmd.Env = mergeEnvironment(spec.Environment, spec.UnsetEnvironment)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags:    createNoWindow | createNewProcessGroup | createBreakawayFromJob,
-		NoInheritHandles: true,
+	flags := uint32(createNoWindow | createNewProcessGroup | createBreakawayFromJob)
+	cmd := newCommand(flags)
+	err := cmd.Start()
+	if errors.Is(err, syscall.ERROR_ACCESS_DENIED) && ctx.Err() == nil {
+		var inJob uint32
+		ok, _, _ := isProcessInJob.Call(^uintptr(0), 0, uintptr(unsafe.Pointer(&inJob)))
+		if ok != 0 && inJob != 0 {
+			// A host may forbid breakaway. Respect that job policy and retry
+			// a fresh command without changing console/environment behavior.
+			cmd = newCommand(flags &^ createBreakawayFromJob)
+			err = cmd.Start()
+			if err == nil {
+				log.Printf("目标进程按宿主 Job 策略启动 pid=%d", cmd.Process.Pid)
+			}
+		}
 	}
-	if err := cmd.Start(); err != nil {
+	if err != nil {
 		return domain.ProcessHandle{}, fmt.Errorf("启动 %s 失败: %w", identity.Executable, err)
 	}
 	pid := cmd.Process.Pid
