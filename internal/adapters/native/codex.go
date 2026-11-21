@@ -11,7 +11,7 @@ func IsCodex(identity domain.AppIdentity) bool {
 	path := strings.ToLower(strings.ReplaceAll(identity.Executable, "\\", "/"))
 	base := path[strings.LastIndex(path, "/")+1:]
 	if name == "com.openai.codex" {
-		return base == "codex" && strings.Contains(path, ".app/contents/macos/")
+		return (base == "codex" || base == "chatgpt") && strings.Contains(path, ".app/contents/macos/")
 	}
 	for _, value := range []string{identity.PackageName, identity.PackageFamily, identity.AUMID} {
 		value = strings.ToLower(strings.TrimSpace(value))

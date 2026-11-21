@@ -35,6 +35,8 @@ func TestCodexIdentityRequiresPackageAndExecutable(t *testing.T) {
 		{PackageName: "Claude", Executable: "C:/Codex.exe"},
 		{PackageName: "OpenAI.Codex", Executable: "C:/other.exe"},
 		{PackageName: "com.openai.codex", Executable: "/Applications/Codex.app/Contents/MacOS/other"},
+		{PackageName: "com.openai.chat", Executable: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"},
+		{PackageName: "com.openai.codex", Executable: "/Applications/ChatGPT"},
 	} {
 		if _, err := PlanCodex(identity, 7897); err == nil {
 			t.Fatalf("accepted %+v", identity)
@@ -46,5 +48,19 @@ func TestCodexIdentityRequiresPackageAndExecutable(t *testing.T) {
 	}
 	if _, err := PlanCodex(identity, 65536); err == nil {
 		t.Fatal("invalid port accepted")
+	}
+}
+
+func TestPlanCodexAcceptsUnifiedMacApp(t *testing.T) {
+	identity := domain.AppIdentity{
+		PackageName: "com.openai.codex",
+		Executable:  "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+	}
+	spec, err := PlanCodex(identity, 7897)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Identity.Executable != identity.Executable {
+		t.Fatalf("launch executable = %q, want %q", spec.Identity.Executable, identity.Executable)
 	}
 }
